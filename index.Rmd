@@ -1,0 +1,15 @@
+---
+title: "Forecasting - Principles and Practice"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+# Chapter 1 - Getting Started
+
+* [Notes](01-getting_started.html)
+

@@ -31,4 +31,34 @@ Some things are easier to forecast than others - take the time of tomorrow's sun
 
 Forecasting is frequently confused with *planning* and *goals*:
 
-**Forecasting** is about predicting the future as accurately as possible, given
+**Forecasting** is about predicting the future as accurately as possible, given all information available. This includes historical data and knowledge of events in the future that may impact the forecasts.
+
+**Goals** are what you would like to have happen. Goals should be linked to forecasts and plans, but this does not always occur. Too often they are set without any plan to reach them, and no forecasts to determine whether they are realistic.
+
+**Planning** is a response to forecasts and goals. It involves determining the appropriate actions that are required to make your forecasts match your goals.
+
+
+Forecasting is an integral part of the decision-making activities of management. 
+
+- **Short-term** forecasts for scheduling of personnel, production, and transportation.
+- **Medium-term** forecasts to determine future resource requirements in order to purchase raw materials, hire personnel, or buy machinery and equipment.
+- **Long-term** forecasts for strategic planning.
+
+
+# Determining What To Forecast
+
+Consider a manufacturing environment, the questions are whether forecasts are needed:
+
+- For every product line, or for groups of products?
+- Every sales outluet, for outlets grouped by region, or only for total sales?
+- Weekly, monthly, or annual data?
+
+The forecasting horizon also needs to be determined: one month, six months, ten years? Different types of models are necessary depending on this horizon.
+
+It's worth spending time talking to the people who will use the forecasts to ensure you meet their needs, and how the forecasts are to be used.
+
+It will then be necessary to find or collect the data on which the forecasts will be based. It may already exist, and the majority of time may be spent trying to find where the data is located.
+
+# Forecasting Data and Methods
+
+
