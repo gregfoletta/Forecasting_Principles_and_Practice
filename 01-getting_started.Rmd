@@ -1,0 +1,34 @@
+---
+title: "Chapter 1 - Getting Started"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(magrittr)
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+```
+
+# What Can Be Forecast?
+
+Forecasting is required in many situations, and the forecasts can be years in advance, or only a few minutes.
+
+Some things are easier to forecast than others - take the time of tomorrow's sunrise versus tomorrow's lotto numbers. The predictability depends on several factors including:
+
+1. How well we understand the factors that contribute to it.
+1. How much data is available.
+1. Whether the forecasts can affect the thing we are trtying to forecast.
+
+# Forecasting, Planning and Goals
+
+Forecasting is frequently confused with *planning* and *goals*:
+
+**Forecasting** is about predicting the future as accurately as possible, given
