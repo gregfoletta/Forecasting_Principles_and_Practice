@@ -13,3 +13,7 @@ output:
 
 * [Notes](01-getting_started.html)
 
+# Chapter 2 - Time Series Graphics
+
+* [Notes](02-time_series_graphics.html)
+

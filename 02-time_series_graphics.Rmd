@@ -1,0 +1,34 @@
+---
+title: "Chapter 2 - Time Series Graphics"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(magrittr)
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+```
+
+
+# TS Objects
+
+A time series can be thought of as a list of numbers, along with some information about what times those numbers were recorded. You can use the `ts()` object, or the tidyverse `tsibble()`.
+
+```{r}
+library(tsibble)
+
+
+y <- ts(c(1, 34, 454, 34, 6), start = 2012)
+
+y %>% as_tibble()
+```
+
+l

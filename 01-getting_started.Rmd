@@ -61,4 +61,96 @@ It will then be necessary to find or collect the data on which the forecasts wil
 
 # Forecasting Data and Methods
 
+If there are no data available, **qualitative forecasting** methods must be used. These methods are not guesswork: they are well-developed structured approached to obtaining good forecasts using historical data.
 
+**Quantitative forecasting** can be applied when two conditions are satisfied:
+
+- Numerical information about the past is available.
+- It is reasonable to assume that some aspects of past patters will continue into the future.
+
+Most quantitative predictions problems either use:
+
+1. Time series data, collected at regular intervals over time, or
+1. Cross-sectional data, collected at a single point in time.
+
+## Time Series Forecasting
+
+Anything observed sequentially over time is a time series. The observations can be at regular or irregular intervals.
+
+When forecasting time series data, the aim is to estimate how the sequence of observations will continue into the future.
+
+The simplest time series forecasting methods use only information on the varaible to be forecast, and make no attempt to discover the factors that affect its behaviour. They extrapolat seasonal patterns, but ignore all other information such as marketing initiatives, competitor activity, changes in economic conditions, etc.
+
+# Predictor Variables
+
+A model of electricity demand with predictor variables might be of the form:
+
+$$ ED = f(current temp, strength of economy, population, time of day, day of week, \epsilon $$ 
+
+This is an **explanitory model**. We could also use a time series model for forecasting. In this case:
+
+$$ ED_{t+1} = f(ED_t, ED_{t-1}, ED_{t-2}, \ldots, \epsilon) $$
+
+There is also a third type of model which combines the features of the above two models:
+
+$$ ED_{t+1} = f(ED_t, current, time, day, \epsilon) $$
+
+These types of "mixed models" have various names: dynamic regression, panel data, longitudinal models, transfer function models, and linear system models (assuming $f()$ is linear).
+
+An explanitory model is useful because it incorporates information about other variables, rather than only historical values. However there are reasons a time series model may be selected:
+
+- System is not well understood.
+- System is understood, but it's difficult to measure the relationships that are assumed to govern its behaviour.
+- Difficult to know or forecast the future values of the various predictors
+- May only be concerned with what will happen, not why it happens.
+
+# Basic Steps
+
+A forecasting task usually involves five basic steps:
+
+## Problem Definition
+
+Often the most difficult step, defining the problem carefully requires an understanding of the way the forecasts will be used, who will use them, and how the forecasting function fits within the organisation. A forecaster needs to spend time talking to everyone who will be involved in collecting data, maintaining databases, and using the forecasts.
+
+## Gathering Information
+
+There are two types of data required:
+
+- Statistical data
+- Accumulated expertise of the people who collect the data.
+
+Often it's difficult to obtain historical data, in which case judgemental forecasting methods can be used. Occasionally old data will be less useful due to structural changes in the system being forecast, so the most recent data may be chosen.
+
+However good statistical models will handle evolutionary changes in the system - don't throw away good data unnecessarily.
+
+## Preliminary (Exploratory) Analysis
+
+Start by graphing the data - are there consistent patterns? Is there a significant trend? Is seasonality important? Are there business cycles? Are there outliers?
+
+## Choosing and Fitting Models
+
+The best model to use depends on the availability of historical data, the strength of relationships between the forecast and explanitory variables, and the way in which the forecasts are to be used.
+
+Each model is an artificial construct based on a set of assumptions. Models include regression models, exponential smoothing methods, Box-Jenkins ARIMA models, dynamic regression models, and hierarchical forecasting.
+
+## Using and Evaluating a Forecasting Model
+
+The performance of a model can only be properly evaluated after the data for the forecast period has become available. There are also organisational issues in using and acting on the forecasts.
+
+Other practical issues include handling missing values and outliers, or dealing with short time series.
+
+# Statistical Forecasting Perspective
+
+The thing we're trying to forecast is unknown, and can be thought of as a random variable. In most forecasting scenarios, the variation of the thing we are trying to forecast shrinks as the event approaches. The further ahead we forecast, the more uncertain we are.
+
+When we obtain a forecast, we are estimating the middle of a range of possible values. This is accompanied by a **prediction interval** giving a range of values, for example a 95% prediction interval. The average line of all possible future values is caled the **point forecasts**.
+
+Subscript $t$ is time, and $y_t$ denotes an observation at time $t$. If we denote all the information observed as $\mathcal{I}$ and want to forecast $y_t$, we write $y_t|\mathcal{I}$. This means "the random variable $y_t$ given we know $\mathcal{I}$.
+
+The set of values that this random variable could take, along with their relative probabilities is known as the probability distribution of $y_t|\mathcal{I}$. In forecasting we call this the **forecast distribution**.
+
+When talking about a forecast of $y_t$, it is denoted as $\hat{y}_t$.
+
+$\hat{y}_{t|t-1}$ means the forecast of $y_t$ taking into account all previous observations $(y_1, \ldots, y_{t-1})$.
+
+$\hat{y}_{T+h|T}$ means the forecast of $y_{T+h}$ taking into account $(y_1, \ldots, y_T}$. I.e. an h-step forecast taking account of all observations up to time $T$.
