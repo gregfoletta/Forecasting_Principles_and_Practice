@@ -15,6 +15,9 @@ library(tidyverse)
 library(magrittr)
 knitr::opts_chunk$set(echo = TRUE)
 library(kableExtra)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
 ```
 
 
@@ -22,13 +25,403 @@ library(kableExtra)
 
 A time series can be thought of as a list of numbers, along with some information about what times those numbers were recorded. You can use the `ts()` object, or the tidyverse `tsibble()`.
 
-```{r}
+```{r, message = FALSE}
 library(tsibble)
+library(vctrs)
+library(lubridate)
 
 
 y <- ts(c(1, 34, 454, 34, 6), start = 2012)
+x <- tsibble(
+    date = seq(as.Date('2010-01-01'), as.Date('2019-01-01'), by = 'years'),
+    value = rnorm(10)
+)
 
-y %>% as_tibble()
+print(y)
+print(x)
 ```
 
-l
+# Time Plots
+
+FOr time series data, the obvious graph is a time plot. The observations are plotted against the time of observation.
+
+```{r, message = FALSE}
+# Library of time series data
+library(tsibbledata)
+# ggplot2 scales
+library(scales)
+
+ansett %>% 
+  filter(Airports == 'MEL-SYD') %>% 
+  ggplot() +
+  geom_line(aes(Week, Passengers, colour = Class))
+
+```
+
+
+There are some interesting features:
+
+- Period in 1989 when no passengers were carried due to an industrial dispute.
+- Period of reduced load on economy when some enconomy seats were replaced by business class seats.
+- Large dips in the load around the start of the year due to holiday effects.
+- Long term fluctuation.
+- Some periods of missing observations.
+
+Any model will need to take all these features into account in order to effectively forecast the passenger load into the future.
+
+A simpler series:
+
+```{r, message = FALSE}
+library(fpp)
+
+a10 %>% 
+  autoplot() +
+  labs(
+    title = 'Antidiabetic Drig Sales',
+    x = 'Year',
+    y = '$ million'
+  )
+```
+
+In this time series there is a clear increasing trend. There is also a strong seasonal pattern that increases in size every year. The seasonal drop is due to a government subsidisation scheme which makes it cost-effective for people to stockpile the drugs at the end of the year.
+
+Any forecasts would need to capture both the long term trend, as well as the seasonal pattern.
+
+# Time Series Patterns
+
+When we describe a time series, there are a number of terms that are used that need to be defined:
+
+**Trend** - a trend exists when there is a long term increase or decrease in the data, not necessarily linear.
+
+**Seasonal** - a seasonal pattern occurs when a time series is affected by seasonal factors such as the time of year or the day of the week. The seasonality is a known and fixed frequency.
+
+**Cyclic** - A cycle occurs when the data exhibit rises and falls that are not of a fixed frequency. These are often related to econmomic conditions and are often relatred to the 'business cycle'. The duration of these fluctuations is usually at least 2 years.
+
+Don't confuse cyclic with seasonal; the latter is related to the calendar and fixed frequency, whereas the former is of changing frequency.
+
+# Seasonal Plots
+
+A seasonal plot is similar to a time plot except the data are plotten against the individual 'seasons' rather than dates.
+
+Note: the ggplot2 code for `ggseasonplot()` can be [found here](https://github.com/robjhyndman/forecast/blob/6e36927a90a58d3f015b8c0a77598a9aa5ed5282/R/ggplot.R).
+
+```{r, message = FALSE}
+library(forecast)
+
+ggseasonplot(a10, year.labels = TRUE)
+```
+
+In this it's clear that there's a large jump in sales each January - these are probably December sales not registered until the next month.
+
+A useful variation is to view the seasonal data using polar coordinates:
+
+```{r}
+a10 %>% 
+  ggseasonplot(polar = TRUE)
+```
+
+# Seasonal Subseries Plots
+An alternate plot that emphasises the seasonabl pattern is where the data for each season is collected into separate time series plots:
+
+```{r}
+a10 %>% 
+  ggsubseriesplot() +
+  labs(
+    x = 'Month',
+    y = '$ million',
+    title = 'Seasonal Subseries - Antidiabetic Drug Sales'
+  )
+```
+
+The horizontal lines indicate the means for each month. This form of plot is very useful in identifying the underlying seasonal patterns.
+
+# Scatterplots
+
+Sometimes we need to identify the relationships *between* time series. Below we see electricity demand and temperature.
+
+```{r, message = FALSE}
+library(fpp2)
+library(tsibble)
+
+elecdemand %>%
+  as_tsibble() %>% 
+  filter(key != 'WorkDay') %>% 
+  ggplot() +
+  geom_line(aes(index, value)) +
+  facet_grid(rows = vars(key), scales = 'free') +
+  labs(
+    x = 'Date',
+    y = '',
+    title = 'Electricity Demand and Temperature'
+  )
+```
+
+We can study the relationship between demand and temperature by plotting one series against another:
+
+```{r}
+elecdemand %>% 
+  as_tsibble() %>% 
+  spread(key, value) %>% 
+  ggplot() +
+  geom_point(aes(Temperature, Demand), alpha = .1, stroke = .1)
+```
+
+## Correlation
+
+The correlation coefficient is between $x$ and $y$ is:
+
+$$ r = 
+\frac{
+  \sum(x_t - \bar{x})(y_y - \bar{y})
+}{
+  \sqrt{\sum (x_t - \bar{x})^2} \sqrt{ \sum (y_t - \bar{y})^2}
+}
+$$
+
+It's between 1 and -1, where positive is showing a positive relationship, and negative showing a negative relationship.
+
+It measures only the strength of the *linear* relationship and can sometimes be misleading.
+
+## Scatterplot Matrices
+
+When there are several potential predictor variables, it's useful to plot one against the other. Consider the series below of visitor numbers to give regions of NSW:
+
+```{r}
+visnights[,1:5] %>% 
+  autoplot(facets = TRUE) +
+  labs(
+    x = 'Date',
+    y = '# Visitors (millions)',
+    title = 'Visitors to the NSW Regions'
+  )
+```
+
+To see the relationships between the time series, it can be arranged into a scatterplot matrix:
+
+```{r}
+library(GGally)
+
+visnights[,1:4] %>% 
+  as_tibble() %>% 
+  ggpairs(progress = FALSE)
+```
+
+
+We see the scatterplots of the two variables, and their correlations. The centre plots are the density plots for the particular variable.
+
+This plot gives us a quick view of the relationships between all pairs of variables.
+  
+
+# Lag Plots
+
+The figure below shows the quarterly Australian beer production, where the horizontal axis shows *lagged* values of the time series.
+
+Each grah shows $y_t$ plotted against $y_{t - k}$ for different values of $k$.
+
+```{r}
+ausbeer %>% 
+  window(start = 1992) %>% 
+  gglagplot()
+```
+
+What we can see is that there is a positive relationship at lags 4 and 8, reflecting a strong seasonality. The negative relationship seen for lags 2 and 6 occurs because peaks (in Q4) are plotted against troughs (in Q2).
+
+# Autocorrelation
+
+Autocorrelation measures the linear relationships between *lagged values* of the time series.
+
+There are several autocorrelation coefficients corresponding to each panel in the graph above. The autocorrelation coefficients are plotted to show the *autocorrelation function* or *ACF*.
+
+```{r}
+ausbeer %>% 
+  window(start = 1992) %>%
+  ggAcf()
+```
+
+In this graph $r_4$ is higher than for the other lags. This is due to the seasonal pattern in the data. The peaks tend to be four quarters apart.
+
+The dashed blue lines indicate whether the correlations are significantly different from zero.
+
+## Trend and Seasonality in ACF Plots
+
+When data have a trend, the autocorrelations for small lags tend to be large and positive. This is because observatiosn nearby in time are also nearby in size. So an ACF of tended time series tends to have positive values that slowly decrease as the lags increase.
+
+When data are seasonal, the autocorrelatons will be larger for the seasonal lags (at multiples of the seasonal frequency) than for other lags.
+
+When data are both trended **and** seasonal, you see the combination of these effects:
+
+```{r}
+elec %>% 
+  window(start = 1980) %>%
+  autoplot() +
+  labs(
+    x = 'Year',
+    y = 'GWh',
+    title = 'Australian Electricity Demand'
+  )
+
+elec %>% 
+  window(start = 1980) %>% 
+  ggAcf(lag = 48)
+```
+
+The slow decrease is due to the trend, while the dips are due to the seasonality.
+
+# White Noise
+
+Time series that show no autocorrelation are called **white noise**:L
+
+```{r}
+set.seed(1)
+
+y <- ts(rnorm(200))
+
+y %>% 
+  as_tsibble() %>% 
+  ggplot() +
+  geom_line(aes(index, value))
+
+ggAcf(y)
+```
+
+For white noise, we expect autocorrelation to be close to 0, but not exactly as there is some random variation. For a white noise series, we expect 95% of the spikes in the ACF to lie within $\pm 2 / \sqrt{T}$, where $T$ is the length of the time series. These are the blue lines in the ACF plot. If one or more large spikes, or more than 5%, are outside the lines, it's probably not white noise.
+
+# Exercises
+
+1. **Look at the `gold`, `woolyrnq` and `gas` represent.**
+
+Gold is the daily morning prices of gold in USD, gas is Australia's monthly gas production, and woolyrnq is the quarterly producton (in tonnes) of woolen yarn in Australia.
+
+a) **Use `autoplot()` to plot each of these in separate plots.**
+
+```{r}
+gold %>% 
+  autoplot() + 
+  labs(x = 'Date', y = 'Price (USD)', title = 'Morning Price of Gold')
+
+gas %>% 
+  autoplot() +
+  labs(x = 'Date', y = '', title = 'Australian Monthly Gas Production')
+
+woolyrnq %>% 
+  autoplot() +
+  labs(x = 'Quarter', y = '', title = 'Australian Woolen Yarn Production')
+```
+
+c) **What is the frequency in each of the series?**
+
+```{r}
+list('Gold' = gold, 'Gas' = gas, 'Wool' = woolyrnq) %>% 
+  map(~frequency(.x))
+```
+
+Gold is every 1 day, gas 1/12 of a year, or a month, and wool is 1/4 of a year.
+
+c) **Spot the outlier in the `gold` series.**
+
+```{r}
+which.max(gold)
+```
+
+
+2). **Download the tute1.csv from the book website, open it in Excel (or some other spreadsheet application), and review its contents. You should find four columns of information. Columns B through D each contain a quarterly series, labelled Sales, AdBudget and GDP. Sales contains the quarterly sales for a small company over the period 1981-2005. AdBudget is the advertising budget and GDP is the gross domestic product. All series have been adjusted for in inflation.**
+
+a) **Read in the data**
+
+```{r}
+q2 <- read_csv('http://otexts.com/fpp2/extrafiles/tute1.csv')
+```
+
+b) **Convert to a time series.**
+
+```{r}
+q2ts <-
+  q2 %>%
+  select(-X1) %>% 
+  ts(start = 1981, frequency = 4)
+```
+
+c) **Construct time series plots of each of the three series.**
+
+```{r}
+q2ts %>%
+  as_tsibble() %>% 
+  ggplot() +
+  geom_line(aes(index, value)) +
+  facet_grid(rows = vars(key), scales = 'free') +
+  labs(
+    x = 'Quarter',
+    y = 'Dollars',
+    title = 'Budget, GDP and Sales'
+  )
+```
+
+3) **Download some monthly Australian retail data from the book website. These represent retail sales in various categories for different Australian states,and are stored in a MS-Excel file.**
+
+a) **Read in the data.**
+
+```{r}
+library(readxl)
+download.file(
+  'https://otexts.com/fpp2/extrafiles/retail.xlsx', 
+  tmp <- tempfile()
+)
+
+q3 <- read_excel(tmp, skip = 1)
+```
+
+b) **Select one of the timer series.**
+
+```{r}
+q3ts <-
+  q3 %>% 
+  select(A3349916R) %>% 
+  ts(frequency = 12, start = c(1982, 4))
+```
+
+c) **Explore the time series, Can you spot any seasonality, cyclicity and trend? What do you learn
+about the series?**
+
+```{r}
+q3ts %>% 
+  as_tsibble() %>% 
+  ggplot() +
+  geom_line(aes(index, value)) +
+  labs(x = 'Month', y = 'Sales', title = 'Australian Reatil Data')
+
+q3ts %>% ggseasonplot()
+
+q3ts %>% ggsubseriesplot()
+
+q3ts %>% gglagplot()
+
+q3ts %>% ggAcf()
+```
+It appears that there is a 6 month seasonal trend in the data, with retail sales jumping in Jun (likely due to the end of the financial year) and December (likely due to Chrismas).
+
+There is a trend upwards up until 2008 when the 'Great Financial Crisis' hits:
+
+```{r}
+q3ts %>% 
+  window(start = 2004) %>% 
+  ggseasonplot()
+```
+
+4) Create time plots of the following time series: `bicoal`, `chicken`, `dole`, `usdeaths`, `lynx`, `goog`, `writing`, `fancy`, `a10`, `h02`.
+
+```{r}
+bicoal %>% 
+  autoplot() +
+  labs(
+    x = 'Year',
+    y = 'Production',
+    title = 'Annual bituminous coal production in the USA: 1920–1968.'
+  )
+
+chicken
+```
+
+
+
+
+

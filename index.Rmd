@@ -15,5 +15,5 @@ output:
 
 # Chapter 2 - Time Series Graphics
 
-* [Notes](02-time_series_graphics.html)
+* [Notes & Exercises](02-time_series_graphics.html)
 
