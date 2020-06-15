@@ -269,7 +269,7 @@ The slow decrease is due to the trend, while the dips are due to the seasonality
 
 # White Noise
 
-Time series that show no autocorrelation are called **white noise**:L
+Time series that show no autocorrelation are called **white noise**:
 
 ```{r}
 set.seed(1)
@@ -407,7 +407,7 @@ q3ts %>%
   ggseasonplot()
 ```
 
-4) Create time plots of the following time series: `bicoal`, `chicken`, `dole`, `usdeaths`, `lynx`, `goog`, `writing`, `fancy`, `a10`, `h02`.
+4) Create time plots of the following time series: `bicoal`, `chicken`.
 
 ```{r}
 bicoal %>% 
@@ -418,10 +418,86 @@ bicoal %>%
     title = 'Annual bituminous coal production in the USA: 1920–1968.'
   )
 
-chicken
+chicken %>% 
+  autoplot() + 
+  labs(
+    x = 'Year',
+    y = 'USD (constant)',
+    title = 'Price of chicken in US (constant dollars): 1924–1993.'
+  )
 ```
 
 
+5) **Use `ggseasonplot()` and `ggsubseriesplot()` functions to explore the seasonal patterns in the following time series: `writing`, `fancy`.**
 
+We first look at `writing`. This data set is the industry sales for printing and writing paper.
 
+```{r}
+writing %>% 
+  ggseasonplot(year.labels = TRUE)
 
+writing %>% 
+  ggsubseriesplot()
+```
+
+We see a huge dip every year in August, and a small peak in March. The trend is upwards, but we see that 1975 went against the upward
+
+The `fancy` dataset is sales for a souvenir shop in Queensland:
+
+```{r}
+fancy %>% 
+  ggseasonplot(year.labels = TRUE)
+
+fancy %>% 
+  ggsubseriesplot()
+```
+
+In this plot the seasonal cycle is very obvious, ocurring during the November and December holiday season. The trend is upwards, with only 1990 going against this trend. This is likely due to the recession in Australia during that time.
+
+6) Use the following graphics functions: `autoplot()`, `ggseasonplot()`, `ggsubseriesplot()` , `gglagplot()`, `ggAcf()` and explore features from the `hsales` series.
+  - Can you spot any seasonality, cyclicity and trend?
+  -What do you learn about the series?
+  
+```{r}
+hsales %>% 
+  autoplot() +
+  labs(
+    x = 'Month',
+    y = 'Sales',
+    title = 'Monthly sales of new one-family houses sold in the USA since 1973'
+  )
+
+hsales %>% ggseasonplot(continuous = TRUE)
+hsales %>% ggsubseriesplot()
+hsales %>% window(start = 1984) %>% gglagplot()
+hsales %>% window(start = 1984) %>% ggAcf()
+
+```
+
+We can see a seasonality of 12 months via the lag and ACF plots, with the peak coming in Mar/April/May.
+
+7) **Skipped**
+
+8) **The following time plots and ACF plots correspond to four di erent time series. Your task is to match each time plot in the rst row with one of the ACF plots in the second row.**
+
+- 1 -> B
+- 2 -> A
+- 3 -> D
+- 4 -> C
+
+9) **The `pigs` data shows the monthly total number of pigs slaughtered in Victoria, Australia, from Jan 1980 to Aug 1995. Use `mypigs <- window(pigs, start=1990)` to select the data starting from 1990. Use `autoplot()` and `ggAcf() for `mypigs` series and compare these to white noise plots.**
+
+```{r}
+fma::pigs %>% window(start = 1990) %>% autoplot()
+fma::pigs %>% window(start = 1990) %>% ggAcf()
+```
+
+We can see that the autocorrelation is predominantly within the blue bars, which is very similar to what occurs with 'white noise'.
+
+10) **dj contains 292 consecutive trading days of the Dow Jones Index. Do the changes in the Dow Jones Index look like white noise?**
+
+```{r}
+dj %>% diff() %>% ggAcf()
+```
+
+The changes in the Dow Jones index do look like white noise.
