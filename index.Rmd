@@ -17,3 +17,12 @@ output:
 
 * [Notes & Exercises](02-time_series_graphics.html)
 
+# Chapter 3 - Time Series Decomposition
+
+* [Notes & Exercises](03-time_series_decomposition.html)
+
+# Chapter 4 - Time Series Features
+
+# Chapter 5 - The Forecaster's Toolbox
+
+* [Notes & Exercises](05-forecasters_toolbox.html)

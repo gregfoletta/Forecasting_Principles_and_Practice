@@ -1,0 +1,166 @@
+---
+title: "Chapter 3 - Time Series Decomposition"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+```
+
+Time series data can exhibit a variety of patterns, and it is often useful to split a time series into its components.
+
+# Transformations and Adjustments
+
+Adjusting the historical data can often lead to a simpler time series. The adjustments either remove sources of variation or make the pattern more consistent across the whole data set.
+
+## Calendar Adjustments
+
+Some of the variation in seasonal data may be due to calendar effect. For example when looking at monthly sales there will be variation between the months because of the differing number of trading days.
+
+It is easy to remove this variation by dividing the sales total by the number of trading days.
+
+## Population Adjustments
+
+Any data that are affected by population changes can be adjusted to give per-captia data.
+
+```{r}
+global_economy %>% 
+    filter(Country == 'Australia') %>% 
+    autoplot(GDP / Population) +
+    labs(
+        x = 'Year',
+        y = 'GDP per Capita',
+        title = 'Australian GDP per Capita'
+    )
+
+```
+
+## Inflation
+
+Data which are affected by the value of money are best adjusted before modelling. To make these adjustments a price index $z_t$ is used. If $y_t$ is, for example, a house price in year $t$, then $x_t = y_t / z_t * z_{2000}$ is the adjusted price at year 2000 dollar levels.
+
+```{r}
+print_retail <- aus_retail %>% 
+    filter(Industry == 'Newspaper and book retailing') %>% 
+    group_by(Industry) %>% 
+    index_by(Year = year(Month)) %>% 
+    summarise(Turnover = sum(Turnover))
+
+aus_economy <- global_economy %>% 
+    filter(Code == 'AUS')
+
+print_retail %>% 
+    left_join(aus_economy, by = 'Year') %>% 
+    mutate(Adjusted_turnover = Turnover / CPI) %>% 
+    gather('Type', 'Turnover', Turnover, Adjusted_turnover, factor_key = TRUE) %>% 
+    ggplot(aes(Year, Turnover)) +
+    geom_line() +
+    facet_grid(vars(Type), scales = 'free') +
+    labs(
+        x = 'Year',
+        y = 'Turnover (raw and adjusted)',
+        title = 'Turnover for the Australian Print Media Industry'
+    )    
+```
+
+By adjusting for inflation using CPI we can see that Australia's newspaper industry has been in decline for much longer than the original data suggests.
+
+## Mathematical Transformations
+
+If the data show variation that increases or decreases with the level of the series, a transformation can be useful. For example a log transformation $w_t = log(y_t)$ is often useful.
+
+Logarithms are useful because they are interpretable: changes in a log value a relative (or percentage) changes on the original scale. If base 10 is used, an increase of 1 on the log scale is a multiplication of 10 on the original scale. They also constrain forecasts to be positive on the orignal scale.
+
+Power transformations of the form $w_t = y_t^p$ can be used.
+
+A useful family of transformations are the **Box-Cox transformations**. These depend on a parameter $\lambda$:
+
+$$
+w_t = \begin{cases}
+    log(y_t), & \text{if } \lambda = 0; \\
+    (y_t^{\lambda} - 1)/\lambda & \text{otherwise}.
+\end{cases}
+$$
+
+This is always done with a natural logarithm. For $\lambda = 0$ the logarithm is used, and for $\lambda = 1$ the values are shifted down by one. But for all other values of $\lambda$ the time series will change shape.
+
+A good value for $\lambda$ is one that makes the size of the seasonal variation the same across the whole series.
+
+The `guerrero` feature can be used to choose a lambda for you.
+
+```{r}
+lambda <- aus_production %>% 
+    features(Gas, features = guerrero) %>% 
+    pull(lambda_guerrero)
+
+aus_production %>%
+    mutate('Gas Box-Cox Adjusted' = box_cox(Gas, lambda)) %>% 
+    gather('Type', 'Value', Gas, `Gas Box-Cox Adjusted`) %>% 
+    ggplot(aes(Quarter, Value)) +
+    geom_line() +
+    facet_grid(vars(Type), scales = 'free') +
+    labs(
+        x = 'Quarter',
+        y = 'Gas Production (petajoules)',
+        title = 'Australian Gas Production (Box-Cox adjusted)'
+    )
+```
+
+# Time Series Components
+
+If we assume an additive decomposition, then we can write:
+
+$$ y_t = S_t + T_t + R_t $$
+
+Where we have the **S**easonal, **T**rend and **R**emainder components. Alternatively a multiplicative decomposition would be:
+
+$$ y_t = S_t \times T_t \times R_t $$
+
+Additative is most appropriate if the magnitude of the seasonal fluctuations, or the variation around the trend cycle, doesn't vary with the level of the time series. Multiplicative decompositions are approprite when they do. Multiplicative is most common with economic time series.
+
+An alternative to multiplicative decomposition is to transform the data until the variation appears to be stable over time:
+
+$$ 
+y_t = S_t \times T_t \times R_t \text{, then} \\
+log(y_t) = log(S_t) + log(T_t) + log(R_t) 
+$$
+
+## Employment in the US Reatil Sector
+
+Let's decompose the number of people employed in the US retail sector.
+
+```{r}
+us_retail_employment <- us_employment %>% 
+    filter(year(Month) >= 1990 & Title == 'Retail Trade') %>%
+    select(-Series_ID)
+
+us_retail_employment %>% 
+    autoplot(Employed) +
+    labs(
+        x = 'Year',
+        y = 'Persons (thousands)',
+        title = 'Total Employment in US Retail Sector'
+    )
+```
+

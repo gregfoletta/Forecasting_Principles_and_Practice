@@ -1,0 +1,498 @@
+---
+title: "Chapter 3 - The Forecaster's Toolbox"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp)
+library(fpp2)
+library(tsibble)
+library(lubridate)
+```
+
+
+
+# Simple Forecasting Methods
+
+Some methods are extremely simple yet surprisingly effective. The following methods can be considered the benchmark against which other models will be tested.
+
+## Average Method
+
+Here, the forecasts of all future values are equal to the average (mean) of the historical data.
+
+$$ \hat{y}_{T + h|T} = \bar{y} = (y_1 + \ldots + y_T)/T $$
+
+```{r}
+dj %>% meanf(5)
+```
+
+## Naive Method
+
+For naive forecasts, we simply set all forecasts to be the value of the last observation:
+
+$$ \bar{y}_{T + h|T} = y_T $$
+
+```{r}
+dj %>% naive(2)
+dj %>% rwf(2)
+```
+
+Because a naive forecast is optimal when data follow a random walk, these are also called **random walk forecasts**.
+
+## Seasonal Naive Method
+
+A similar method is useful for highly seasonal data. Each forecast is set to bethe last observed value from the same season of the year.
+
+$$ \bar{y}_{T + h|T} = y_{T + h - m(k+1)} $$
+
+Where $m$ is the seasonal period, and $k$ is the integer part of $(h - 1)/m$, i.e. the number of complete years in the forecast period prior to time $T + h$.
+
+e.g. for monthly data, the forecast for all future February values is equal to the last observed February value.
+
+```{r}
+dj %>% snaive(2)
+```
+
+## Drift Method
+
+A variation on the naive method is to allow the forecasts to increase or decrease over time, where the amount of change over time is called **drift**. This is set to the average change in the historical data.
+
+$$ 
+\bar{y}_{T + h|T} = y_T + \frac{h}{T-1} \sum_{t=2}^T (y_y - y_{t-1} ) \\
+= y_T + h \bigg( \frac{ y_T - y_1 }{ T - 1 } \bigg)
+$$
+
+This is equivalent between drawing a line between the first and last observations and extrapolating this into the future.
+
+```{r}
+elec %>% rwf(3, drift = TRUE)
+```
+
+# Examples
+
+Applying the first three methods to the quarterly beer production
+
+```{r}
+
+ausbeer %>% 
+    window(., start = 1992, end = c(2007, 4)) %>% {
+    autoplot(.) +
+    autolayer(meanf(., h=11), PI = FALSE, series = 'Mean') +
+    autolayer(naive(., h=11), PI = FALSE, series = 'Naive') +
+    autolayer(snaive(., h=11), PI = FALSE, series = 'Seasonal Naive')
+} +
+    labs(
+        x = 'Year',
+        y = 'Megalitres',
+        title = 'Forecasts for Quarterly Beer Production',
+        colour = 'Forecast Method'
+    )
+      
+
+```
+
+Non-seasonal methods applied to 200 days of Google stock prices:
+
+```{r}
+goog200 %>% {
+    autoplot(.) +
+    autolayer(meanf(., 40), PI = FALSE, series = 'Mean') +
+    autolayer(rwf(., 40), PI = FALSE, series = 'Naive') +
+    autolayer(rwf(., 40, drift = TRUE), PI = FALSE, series = 'Drift') +
+    labs(
+        x = 'Day',
+        y = 'Change in Price (USD)',
+        colour = 'Forecast',
+        title = 'Google Stock (daily)'
+    )
+}
+    
+```
+
+Sometimes these methods are the best forecasting method available, but mainly they are used as a benchmark - i.e. if a more complex forecasting method can't perform better than these, it shouldn't be considered.
+
+# Transformations and Adjustments
+
+Adjusting the data can sometimes lead to simpler forecasting tasks. The purpose of transformation is to simplify the patterns in historical data by removing known sources of variation, or by making the pattern more consistent across the whole data set.
+
+## Calendar Adjustments
+
+Some variation may be due to calendar effects and it can be much easier to remove this variation before fitting a forecasting model. 
+
+For example studying milk production on a farm, there is variation simply because the numnber of days in a month is not the same. The `monthdays()` function computes the number of days in each month or quarter.
+
+```{r}
+milk %>% 
+    as_tsibble() %>% 
+    rename(Month = index, Production = value) %>% 
+    mutate(DailyAverage = Production / days_in_month(as_date(Month))) %>% 
+    gather(Metric, Value, c('Production', 'DailyAverage')) %>% 
+    ggplot() +
+    geom_line(aes(Month, Value)) +
+    facet_grid(rows = vars(Metric), scales = 'free') +
+    labs(
+        x = 'Month',
+        y = 'Value',
+        title = 'Milk Production per Cow'
+    )
+```
+
+We can see that the pattern in the daily average is much simpler than the raw production values. By removing the variation due to the different month lengths, we've created a simpler pattern which should be easier to forecast.
+
+This adjustment is pertinent for sales data when the number of trading days in the month varies. In this case the number of sales per trading day can be modelled instead of total sales for the month.
+
+
+## Popultion Adjustments
+
+Data that are affected by population changes can be adjusted to give per-capita data. That is, consider the data per person, per thousand people, etc rather than the total.
+
+## Inflation Adjustments
+
+Data which are affected by the value of money are best adjusted before modelling. A house that cost $200,000 thirty years ago is not that same as a $200,000 house today.
+
+To make these adjustments, a price index is used. If $z_t$ denotes the index, and $y_t$ the original house price in year $t$, then $x_t = \frac{y_t}{z_t} \times z_{2000}$ is the adjusted house price in year 2000 dollars.
+
+For consumer goods, the CPI is a good index.
+
+
+## Mathematical Transformations
+
+If the data show variation that increases or decreases with the level of the series, a transformation can be useful. For example a log transformation $w_t = log(y_t)$ is often useful.
+
+Logarithms are useful because they are interpretable: changes in a log value a relative (or percentage) changes on the original scale. If base 10 is used, an increase of 1 on the log scale is a multiplication of 10 on the original scale. They also constrain forecasts to be positive on the orignal scale.
+
+Power transformations of the form $w_t = y_t^p$ can be used.
+
+A useful family of transformations are the **Box-Cox transformations**. These depend on a parameter $\lambda$:
+
+$$
+w_t = \begin{cases}
+    log(y_t), & \text{if } \lambda = 0; \\
+    (y_t^{\lambda} - 1)/\lambda & \text{otherwise}.
+\end{cases}
+$$
+
+This is always done with a natural logarithm. For $\lambda = 0$ the logarithm is used, and for $\lambda = 1$ the values are shifted down by one. But for all other values of $\lambda$ the time series will change shape.
+
+A good value for $\lambda$ is one that makes the size of the seasonal variation the same across the whole series. You can use the `BoxCox.lambda()` function:
+
+```{r}
+elec_lambda <- BoxCox.lambda(elec)
+
+elec %>% 
+    as_tsibble() %>%
+    mutate(Demand = value) %>% 
+    mutate(Demand_BoxCox = BoxCox(elec, elec_lambda)) %>% 
+    gather(DataForm, Value = c(Demand, Demand_BoxCox)) %>% 
+    ggplot(aes(index, value)) +
+    geom_line() +
+    facet_grid(rows = vars(DataForm), scales = 'free') +
+    labs(
+        x = 'Month',
+        y = 'Demand',
+        title = 'Electricity Demand: Raw and BoxCox Transformed'
+    )
+```
+
+Having transformed there needs to be a way to forecast using this transformed data. The reverse Box-Cox is:
+
+$$
+y_t = \begin{cases}
+exp(w_t) & \text{if } \lambda = 0; \\
+(\lambda w_t + 1)^{(1/\lambda)} & \text{otherwise.}
+\end{cases}
+$$
+
+- If some $y_t \le 0$, no power transformation is possible unless all observations are adjusted by adding a constant.
+- Choose a simple value of $\lambda$.
+- The forecasting results are relatively insensitive to the value of $\lambda$.
+- Often no transformation is needed.
+- Transformations sometimes make little difference to the forecasts, but have a large effect on prediction intervals.
+
+## Bias Adjustments
+
+One issue with mathematical transforms (like Box-Cox) is that the back-transformed forecast will not be the mean of the the forecast distribution. In will usually be the median of the forecast distribution, assuming the dsitribution on the transformed space is symmetric.
+
+This may be ok, but sometimes the mean is required.
+
+For a Box-Cox, the back-transoformed mean is:
+
+$$
+y_t = \begin{cases} 
+exp(w_t) \bigg[ 1 + \frac{\sigma^2_h}{2} \bigg] & \text{if } \lambda = 0; \\
+(\lambda w_t + 1)^{1/\lambda} 
+    \bigg[ 
+        1 + \frac{\sigma^2_h(1-\lambda)}{2(\lambda w_t + 1)^2}
+    \bigg] & \text{otherwise;}
+
+\end{cases}
+$$
+
+where $\sigma^2_h$ is the  $h$-step forecast variance.
+
+The difference between a simple back-transformation and the formula above is **bias**. When we use the mean, rather than the median, we say the point forecasts have been **bias adjusted**.
+
+Let's take a look at at the difference the bias adjustment makes:
+
+```{r}
+eggs %>% {
+    autoplot(.) +
+    autolayer(
+        rwf(., drift = TRUE, lambda = 0, h = 50, level = 80),
+        series = 'Back Transform'
+    ) +
+    autolayer(
+        rwf(., drift = TRUE, lambda = 0, h = 50, level = 80, biasadj = TRUE),
+        series = 'Bias Adjusted',
+        PI = FALSE
+    ) 
+}
+```
+
+# Residual Diagnostics
+
+Each observation can be forecast using all previous observations. These are called **fitted values** and are denoted by $\hat{y}_{t|t-1}$, or simply $\hat{y}_t$. They always involve one-step forecasts.
+
+They are often not true forecasts as they are estimated using all available observations, including those in the future. For example in the average method, $y_t = \hat{c}$ where $\hat{c}$ is the average of all available observations, including those *after* $t$.
+
+## Residuals
+
+Residuals in a time series model are what is 'left over' after fitting a model. For many (but not all) models, the residuals are $e_t = y_t - \hat{y}_t$.
+
+A good model yields residuals with the following properties:
+
+- The residuals are uncorrelated. If these is correlation, there is information left in the residuals which should be used in computing forecasts.
+- The residuals have zero mean. If not, the residuals are biased.
+
+Adjusting for bias is easy - if the residuals have mean $m$, then add $m$ to all forecasts and the bias problem is solved. Fixing correlation is harder.
+
+It is useful (but not necessary) that the residuals have the following two properties:
+
+- Constant variance.
+- Normally distributed.
+
+These two properties make the calculation of prediction intervals easier.
+
+## Example
+
+For stock market prices and indexes, the naive methods are often the best. Each forecast is equal to the last observed value, so then the residuals are equal to the difference between consecutive observatiosn:
+
+$$ e_t = y_t - \hat{y_t} = y_t - y_{t-1} $$
+
+Let's take a look at the Google daily closing stock price:
+
+```{r}
+goog200 %>% 
+    as_tsibble() %>% 
+    ggplot(aes(index, value)) +
+    geom_line() +
+    labs(
+        x = 'Day',
+        y = 'Closing Price (USD)',
+        title = 'Google Closing Stock Price (daily ending 6/12/2013('
+    )
+```
+
+Let's take a look at the residuals from forecasting using the naive method:
+
+```{r}
+goog_naive_res <- 
+    goog200 %>% 
+    naive() %>% 
+    residuals() %>% 
+    na.remove()
+
+goog_naive_res %>% 
+    autoplot() +
+    geom_line() +
+    labs(
+        x = 'Day',
+        y = 'USD',
+        title = 'Google Closing Stock Prices - Naive Residuals'
+    )
+```
+
+```{r}
+goog_naive_res %>% 
+    as_tsibble() %>%
+    ggplot() +
+    geom_histogram(aes(value), binwidth = 1) +
+    labs(
+        x = 'Residual (bucket size 1)',
+        y = 'Count',
+        title = 'Google Stock Price - Naive Forecast - Residual Distribution'
+    )
+```
+
+We see the right tail is a little too long for a normal distribution.
+
+```{r}
+goog_naive_res %>% 
+    ggAcf()
+```
+
+
+The graphs show that the naive method appears to account for all information. The mean of the residuals is close to zero and there is no significant correlation between residuals as shown in the ACF plot. The time plot shows the residual variation is resonably constant, with the exception of one outlier.
+
+## Portmanteau Test for Autocorrelation
+
+In addition to the ACF plot, there is a more formal test for autocorrelation. The whole set of $r_k$ values is treated as a group, rather than individually. Remembering that $r_k$ is the autocorrelation for lag $k$. 
+
+The ACF plot is essentially a multiple hypothesis test, and there is a probability of a false positive. With enough tests it is probable we will get one false positive, concluding there is some autocorrelation.
+
+To overcome this, the first $h$ autocorrelations are tested to see whether they are significantly different from what would be expected from a white noise process.
+
+One such test is the **Box-Pierce** test:
+
+$$ Q = T \sum_{k=1}^h r^2_k $$
+
+where $h$ is the maximum lag being considered and $T$ is the number of observations. If each $r_k$ is close to zero, $Q$ will be small. If some $r_k$ values are large, then $Q$ will be large. A suggestion is to use $h = 10$ for non-seasonal data and $h = 2m$ for seasonal data, where $m$ is the period. However the test is not good when $h$ is large, so if values are larger than $T/5$, use $h = T/5$.
+
+A related a more accurate test is the **Ljung-Box** test:
+
+$$ Q^* - T(T + 2) \sum_{k=1}^h (T - k)^{-1} r^2_k $$ 
+
+Again, large values of $Q^*$ suggest the autocorrelations **do not** come from a white noise series. 
+
+How large is too large? If the autocorrelations did come from a white noise series, then both $Q$ and $Q^*$ would have a $\chi^2$ distribution with $(h - K)$ degrees of freedom, where $K$ is the number of parameters in the model. If calculated fom raw data (rather than residuals), then $K = 0$.
+
+For the Google stocket price, the naive model has no parameters, so $K = 0$ also.
+
+```{r, comment=''}
+Box.test(goog_naive_res, lag = 10, fitdf = 0)
+
+Box.test(goog_naive_res, lag = 10, fitdf = 0, type = 'Lj')
+```
+
+For both tests, the results are not significant as the p-values are large. The conclusion is that the residuals are not distinguishable from a white noise series.
+
+You can use the `checkresiduals()` function to perform a number of checks at once:
+
+```{r}
+goog200 %>% 
+  naive() %>% 
+  checkresiduals()
+```
+
+# Evaluating Forecast Accuracy
+
+## Training and Test Sets
+
+It's common to split data into training and test sets, with the test set being around 20% of the data.
+
+Some notes:
+
+- A model which fits the training data well will not necessarily forecast well.
+- A perfect fit can always be obtained by using a model with enough parameters.
+- Over fitting a model to data is just as bad as failing to identify a systematic pattern in the data.
+
+## Function to Subset Time Series
+
+The `window()` function can be used to subset `ts` objects.
+
+```{r}
+ausbeer %>% window(start = 1993, end = 1995)
+```
+
+There is also subset, which allows for more types of subsetting:
+
+```{r}
+# Extract by indice
+ausbeer %>% subset(start = length(.) - 4)
+
+# Extract by the 4th quarter of each year
+ausbeer %>% subset(quarter = 4)
+```
+
+## Forecast Errors
+
+An error is the difference between and observed value and a forevast:
+
+$$ e_{T = h} = y_{T+h} - \hat{y}_{T+h|T} $$
+
+where the training data is ${t_1,\ldots,y_T}$ and the test data is ${y_{T+1},y_{T+2}, \ldots}$
+
+- Residuals are calculated on the training set, and forecast errors on the test set.
+- Residuals are based on one-step forecasts, while forecast errors can involve multi-step forecasts.
+
+## Scale Dependence
+
+Forecast errors are on the same scale as the data, and then cannot be compared between data sets. The two most commonly used scale-dependent measures are:
+
+- Mean Absolute Error - $MAE = mean(|e_t|)$
+- Root Mean Squard Error - $RMSE = \sqrt{mean(e^2_t)}$
+
+A forecast method than minimised the MAE will lead to forecasts of the median, while minimising the RMSE will lead to forecasts of the mean.
+
+## Percentage Errors
+
+Percentage errors are given by $p_t = 100e_t / y_t. They're unit free so can be used to forecast between datasets. The Common used measure is mean absolute percentage error:
+
+$$ MAPRE = mean(|p_t|) $$
+
+The disadvantage is that the percentage error is infinite or undefined if y_t = 0. They have a disadvantage in that they put a heavier penalty on negative numbers. Symmetruc MAPTE was proposed to resolve this:
+
+$$ sMAPE = mean(200|y_t - \hat{y}_t| / (y_t + \hat{y}_t)) $$
+
+Hyndman and Koehler recommend that sMAPE not be used.
+
+## Scaled Errors
+
+These were proposed by Hyndman and Koehler as an alternative to using percentage errors. They proposed scaling the errors based on the *training* MAE.
+
+For non-seasonal time series, scaled errors uses naive forecasts:
+
+$$ 
+q_j = \frac{
+  e_j
+}{
+  \frac{1}{T - 1} \sum_{t=2}^T |y_t - y_{t-1}|
+}
+$$
+
+The numerator and denominator both involve values on the scale of the data, $q_j$ in independent of the original data. A scaled error is less than one if it arises from a better forecast than the average naive forecast.
+
+For seasonal time series, a scaled error can be defined using seasonal naive forecasts:
+
+$$ 
+q_j = \frac{
+  e_j
+}{
+  \frac{1}{T - m} \sum_{t=m+1}^T |y_t - y_{t-m}|
+}
+$$
+
+The mean absolute scaled error is simply 
+
+$$ MASE = mean(|q_j|) $$
+
+## Examples
+
+```{r}
+ausbeer %>% 
+  window(start = 1992, end = c(2007,4)) %>% 
+  as_tsibble() %>% 
+  do(
+    mean = meanf(., h = 10)
+  )
+```
+
