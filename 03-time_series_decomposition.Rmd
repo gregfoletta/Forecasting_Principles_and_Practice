@@ -11,7 +11,6 @@ output:
 
 
 ```{r setup, include=FALSE}
-
 knitr::opts_chunk$set(echo = TRUE)
 
 # Switch devices to allow for transparency..
@@ -21,6 +20,7 @@ knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
 ```{r, message = FALSE}
 library(tidyverse)
 library(forecast)
+library(feasts)
 library(fma)
 library(magrittr)
 library(fpp3)
@@ -161,6 +161,373 @@ us_retail_employment %>%
         x = 'Year',
         y = 'Persons (thousands)',
         title = 'Total Employment in US Retail Sector'
+    )
+```
+
+We can use an STL decomposition:
+
+```{r}
+us_retail_employment %>%
+    model(STL(Employed)) %>%
+    components()
+```
+
+```{r}
+us_retail_employment %>%
+    model(STL(Employed)) %>%
+    components() %>% 
+    ggplot() +
+    geom_line(aes(Month, trend), colour = 'red') +
+    geom_line(aes(Month, Employed), colour = 'grey') +
+    labs(
+        x = 'Month',
+        y = 'Person (thousands)',
+        title = 'Total Employment in US Retail (actual + STL)'
+    )
+```
+
+All of the components can be plotted at once. The grey bars show the relative scales of each component.
+
+```{r}
+us_retail_employment %>% 
+    model(STL(Employed)) %>% 
+    components() %>% 
+    autoplot()
+```
+
+## Seasonally Adjusted Data
+
+If the seasonal component is removed from the original data, the resulting are the 'seasonally adjusted' data. For an additive decomposition, the seasonally adjusted data are $y_t - S_t$ and for multiplicative it is $y_t/S_t$.
+
+```{r}
+us_retail_employment %>% 
+    model(STL(Employed)) %>% 
+    components() %>% 
+    ggplot() +
+    geom_line(aes(Month, Employed), colour = 'grey') +
+    geom_line(aes(Month, season_adjust), colour = 'blue') +
+    labs(
+        x = 'Month',
+        y = 'Persons (thousands)',
+        title = 'Total Employment in US (seasonally adjusted)'
+    )
+    
+    
+```
+
+Seasonally adjusted contain the remainder component as well as the trend-cycle. 
+
+# Moving Averages
+
+The classical method of time series decomposition is moving averages. The first step in a classical decomposition is to use moving average to estimate the trend cycle.
+
+## Moving Average Smoothing
+
+A moving average of order $m$ can be written as:
+
+$$ \hat{T}_t = \frac{1}{m} \sum_{j = -k}^k y_{t+j} $$
+
+Where $m = 2k + 1$. So the estimate of the trend-cycle at time $t$ is obtained by averaging values of the time series withing $k$ period of $t$.
+
+```{r}
+global_economy %>% 
+    filter(Country == 'Australia') %>% 
+    mutate(MA_5 = slide_dbl(Exports, mean, .size = 5, .align = 'center')) %>% 
+    ggplot() +
+    geom_line(aes(Year, Exports), colour = 'grey') +
+    geom_line(aes(Year, MA_5), colour = 'blue') +
+    labs(
+        x = 'Year',
+        y = 'Exports (% GDP)',
+        title = 'Australian Exports (Acutal  + Moving Average)'
+    )
+```
+
+The order of the moving average determines the smoothness of the trend-cycle estimate. The larger the order, the smoother the estimate. The orders are usually odd so that the window ($2k + 1$) is symmetric.
+
+## Moving Averages of Moving Averages
+
+It's possible to apply a moving average to a moving average. Once reason is to make an even-order average symmetric. The notation $2 \times 4\text{-MA}$ means a $\text{4-MA}$ followed by a $\text{2-MA}$. Whena $\text{2-MA}$ follows an even order MA, this is then a 'centred moving average or order $m$, where $m$ is even'. An even should be followed by an even, and an odd followed by an odd to make them symmetric.
+
+## Estimating the Trend-Cycle
+
+Consider a $2 \times \text{4-MA}$ on quarterly data:
+
+$$ \hat{T}_t = \frac{1}{8}y_{t-2} + \frac{1}{4}y_{t-1} + \frac{1}{4}y_{t} + \frac{1}{4}y_{t-1} + \frac{1}{8}y_{t-2} $$
+
+Each quarter of the year is given equal weight as then first and last terms apply to the same quarter in consecutive years. The seasonal variation will be averaged out
+
+In general a $2 \times m\text{-MA}$ is equivalent to a weighted moving average of order $m + 1$ where:
+
+- All observations take weight $1/m$
+- Except for the first and last, which take $1/(2m)$
+
+So if the seasonal period is even and order $m$, we use a $2\times m\text{-MA}$ to estimate the trend cycle.
+
+```{r}
+us_retail_employment %>% 
+    mutate(
+        `12-MA` = slide_dbl(Employed, mean, .size = 12, align = 'cr'),
+        `2x12-MA` = slide_dbl(`12-MA`, mean, .size = 2, align = 'cl')
+    ) %>% 
+    ggplot() +
+    geom_line(aes(Month, Employed), colour = 'grey') +
+    geom_line(aes(Month, `2x12-MA`), colour = 'blue')
+```
+
+Any other order choice would have resulted in the graph showing seasonality.
+
+## Weighted Moving Averages
+
+Combinations of moving averages result in weighted moving averages. The $2 \times 4\text{-MA}$ is equivlant to a $5\text{-MA}$ with weights given by $\big[ \frac{1}{8}, \frac{1}{4}, \frac{1}{4}, \frac{1}{4}, \frac{1}{8} \big]$
+
+In general a weighted $m\text{-MA}$ can be written as:
+
+$$ \hat{T}_t = \sum_{j = -k}^k \alpha_j y_{t+j} $$
+
+where $k = (m - 1)/2$ and the weights given by $\big[ \alpha_{-k}, \ldots, \alpha_k \big]$.
+
+It's important that the weights all sum to one and are symmetric. The simple $m\text{-MA}$ is a special case where all of the weights are equal to $1/m$.
+
+A major advantage of the weighted moving averages is they yield a smoother curve. Obervations don't enter and exit at full weight, rather they slowly increase and decrease.
+
+# Classical Decomposition
+
+This originated in the 1920s and is forms the starting point for most other forms. There are two forms: **additive** and **multiplicative**.
+
+In classical we assume that the seasonal component is constant from year to year. For multiplicative seasonality the $m$ values are sometimes called the 'seasonal indicies'.
+
+## Additative
+
+**Step 1**
+
+If $m$ is an even number, compute the trend-cycle component $\hat{T}_t$ using a $2 \times m\text{-MA}$. If it's odd compute using an $m\text{-MA}$.
+
+**Step 2**
+
+Calculate the detrended series $y_t - \hat{T}_t$
+
+**Step 3**
+
+To estimate the *seasonal* component for each season, average the detrended values for that season. For example with monthly data, the seasonal component for March is the average of all the detrended March values in the data.
+
+These seasonal component values are then adjusted to ensure that they add to zero. The seasonal component is then obtained by stringing together these monthly values. This gives $\hat{S}_t$.
+
+**Step 4**
+
+The remainder component is calculated using $\hat{R}_t = y_t = \hat{T}_t - \hat{S}_t
+
+```{r}
+us_retail_employment %>% 
+  model(classical_decomposition(Employed, type = 'additive')) %>% 
+  components() %>% 
+  autoplot() +
+  labs(title = 'US Retail Employment - Classical Decomposition')
+```
+
+## Multiplicative
+
+This is the same, except the detrended series in **Step 2** is $y_t/\hat{T}_t$, and the remainder component in **Step 4** is $\hat{R}_t = y_t/(\hat{T}_t\hat{S}_t)$.
+
+## Comments
+
+While still widely used, classical decomp. is not recommended. Some of the issues:
+
+- The estimate of the trend cycle is unavailable for the first few and last few observations.
+- It over-smoothes rapid rises and falls in the data.
+- Assumes the seasonal component repeats from year to year. For some data this is a reasonable assumption, but for longer series it's not.
+- Occasionally the values of time series in a small number of periods may be unusual - for example an industrial dispute affecting the number of passengers on an airline. The classical method is not robust to these kinds of values. 
+
+
+# X11 Decomposition
+
+X11 is based on classical, but has extra steps in order to overcome some of the drawbacks.
+
+- Estimates are available for endpoint observations.
+- Seasonal component is allowed to vary slowly over time.
+
+X11 can be summarised as such:
+
+- Initial estimate of the trend with a $2 \times 12\text{-MA}$.
+- Removal of this trend from the original series to give an estimate of the seasonal and remainder components $S_t I_t$
+- A preliminary estimate of the seasonal component is found by applying a weighted 6 term moving average ($S_{3\times 3}$) to $S_t I_t$.
+- A preliminary estimate of the adjusted data by dividing the seasonal estimate in the previous step into the original series.
+- A 9,13 or 23 term 'Henderson' moving average is applied to the seasonally adjusted values, depending on the volatility of the series (more volatile requies a longer moving average) to produce an improved trend estimate. This is divided into the original series to give a second seasonal and remainder component estimate.
+- Step 2 is repeated to obtain a final seasonal estimate
+- A final seasonally adjusted series is found by dividing the second estimate of the seasonal from the previous step into the original series.
+- Another Henderson moving average is applied to the final estimate of the seasonally adjusted series.
+- The irregulars are estimated by dividing the trend estiamtes into the seasonally adjusted data $\frac{T_t \times I_t}{\hat{T}_t} \approx I_t$ 
+
+It can be useful to use subseries plots against the seasonal component. These help us to visualise the variation in the seasonal component over time
+
+```{r}
+us_retail_employment %>% 
+  model(STL(Employed)) %>% 
+  components() %>% 
+  gg_subseries(season_year) +
+  labs(
+    x = 'Years',
+    y = 'Persons (thousands)',
+    title = 'US Retail Employment - STL - Subseries'
+  )
+```
+
+# SEATS Decomposition
+
+"SEATS" stands for "Seasonal Extraction in ARIMA Time Series". The works only with quarterly and monthly data.
+
+
+# STL Decomposition
+
+STL is a versatile and robust method for decomposing time series, standing for 'Seasonal and Trend decompositon using Loess'.
+
+Advantages are:
+
+- Unlike SEATS and X11, it handles any type of seasonality, not only monthly and quarterly data.
+- The seasonal component is allowed to change over time, and the rate of change can be controlled by the user.
+- The smoothness of the trend-cycle can also be controlled by the user.
+- It can be robust to outliers, so the occasional unual observations will not affect the estimate of the trend-cycle.
+
+Disadvantages:
+
+- Does not handle trading day or calendar variation automatically.
+- Only provides facilities for additive decompositions.
+
+Mutiplicative decomposition can be achieved by taking the log of the data, then back-tranforming the components. Decompositions between additive and multiplicative can be obtained using a Box-Cox transformation of the data with $0 \lt \lambda \lt 1$. $\lambda = 0$ is multiplicative while $\lambda = 1$ is additive.
+
+## Examples
+
+```{r}
+us_retail_employment %>% 
+  model(STL(Employed ~ trend(window = 7) + season(window = 'periodic'), robust = TRUE)) %>% 
+  components() %>% 
+  autoplot() +
+  labs(
+    x = 'Month',
+    y = 'Persons (thousands)',
+    title = 'US Retail Employment - STL Decomposition'
+  )
+```
+
+The two main parameters are the trend-cycle window and the seasonal window. These control how rapidly those components can change. Both should be **odd numbers**.
+
+- Trend window is the number of consecutive observations to be used when estimating the trend-cycle.
+- Season window is the number of consecutive years to be used in estimating each value in the seasonal component.
+
+Setting the seasonal window to be infinite is equivalent to forcing the seasonal component to be periodic (`season(window = 'periodic')`).
+
+Bu default `STL()` uses a season window of 13 and a trend window of 21. However this may need to be changed. If we apply this to the retail data we see the GFC leak into the remainder component:
+
+
+```{r}
+us_retail_employment %>% 
+  model(
+    `STL Window 7` = STL(Employed ~ trend(window = 7) + season(window = 'periodic'), robust = TRUE),
+    `STL Default` = STL(Employed)
+  ) %>% 
+  components() %>%
+  filter(year(Month) > 2007 & year(Month) < 2012) %>% 
+  ggplot() +
+  geom_line(aes(Month, remainder, colour = .model)) +
+  labs(
+    x = 'Month',
+    y = 'Persons (thousands)',
+    title = 'US Retail - STL Decomposition',
+    subtitle = 'STL Default and Trend Window 7 - Remainder Components'
+  )
+  
+```
+
+# Exercises
+
+1) **Consider the GDP information in global_economy. Plot the GDP per capita for each country over time. Which country has the highest GDP per capita? How has this changed over time?**
+
+```{r}
+global_economy %>% 
+  mutate(GDPpC = GDP / Population) %>%
+  add_count(Country, wt = GDPpC) %>%
+  drop_na(GDPpC) %>% 
+  mutate(Rank = dense_rank(n)) %>% 
+  filter(Rank <= 10) %>% 
+  ggplot() +
+  geom_line(aes(Year, GDPpC, colour = as.factor(Country))) +
+  labs(
+    x = 'Year',
+    y = 'GDP per Capita',
+    title = 'Sum of GDP per Capita - Top 5 Countries'
+  )
+  
+```
+
+2) **For each of the following series, make a graph of the data. If transforming seems appropriate, do so and describe the effect.**
+
+- **United States GDP from `global_economy`**
+
+It's most appropriate to transform this into GDP per capita
+
+```{r}
+global_economy %>% 
+  filter(Country == 'United States') %>% 
+  mutate(GDPpC = GDP / Population) %>% 
+  ggplot() +
+  geom_line(aes(Year, GDPpC)) +
+  labs(
+    x = 'Year',
+    y = 'GDP per Capita',
+    title = 'United States - GDP per Capita'
+  )
+
+
+```
+
+- **Slaughter of Victorian “Bulls, bullocks and steers” in `aus_livestock`**
+
+```{r}
+aus_livestock %>% 
+  filter(
+    Animal == 'Bulls, bullocks and steers' & State == 'Victoria') %>%  
+  ggplot() +
+  geom_line(aes(Month, Count))
+```
+
+- **Victorian Electricity Demand from `vic_elec`**
+
+We'll normalise by temperature. The summertime spikes appear to disappear, however we do get some outliers in the winter months. The overall variation appears to have reduced as well.
+
+```{r}
+vic_elec %>% 
+  mutate(`Demand/Temp` = Demand / Temperature) %>% 
+  pivot_longer(c(Demand, `Demand/Temp`), names_to = 'Measure', values_to = 'Demand') %>% 
+  ggplot() +
+  geom_line(aes(Time, Demand)) +
+  facet_grid(rows = vars(Measure), scales = 'free') +
+  labs(
+    x = 'Time (30 mins)',
+    y = 'Demand (MW and MW/degree celcius)',
+    title = 'Victorian Electricity Demand',
+    subtitle = 'Raw and Temperature Normalised'
+  )
+```
+
+- **Gas production from `aus_production`**
+
+We'll use a Box-Cox transformation.
+
+```{r}
+lambda <- aus_production %>% 
+    features(Gas, features = guerrero) %>% 
+    pull(lambda_guerrero)
+
+aus_production %>%
+    mutate('Gas Box-Cox Adjusted' = box_cox(Gas, lambda)) %>% 
+    gather('Type', 'Value', Gas, `Gas Box-Cox Adjusted`) %>% 
+    ggplot(aes(Quarter, Value)) +
+    geom_line() +
+    facet_grid(vars(Type), scales = 'free') +
+    labs(
+        x = 'Quarter',
+        y = 'Gas Production (petajoules)',
+        title = 'Australian Gas Production (Box-Cox adjusted)'
     )
 ```
 
