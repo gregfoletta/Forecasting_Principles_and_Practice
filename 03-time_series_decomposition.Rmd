@@ -247,7 +247,7 @@ The order of the moving average determines the smoothness of the trend-cycle est
 
 ## Moving Averages of Moving Averages
 
-It's possible to apply a moving average to a moving average. Once reason is to make an even-order average symmetric. The notation $2 \times 4\text{-MA}$ means a $\text{4-MA}$ followed by a $\text{2-MA}$. Whena $\text{2-MA}$ follows an even order MA, this is then a 'centred moving average or order $m$, where $m$ is even'. An even should be followed by an even, and an odd followed by an odd to make them symmetric.
+It's possible to apply a moving average to a moving average. One reason is to make an even-order average symmetric. The notation $2 \times 4\text{-MA}$ means a $\text{4-MA}$ followed by a $\text{2-MA}$. Whena $\text{2-MA}$ follows an even order MA, this is then a 'centred moving average or order $m$, where $m$ is even'. An even should be followed by an even, and an odd followed by an odd to make them symmetric.
 
 ## Estimating the Trend-Cycle
 
@@ -531,3 +531,240 @@ aus_production %>%
     )
 ```
 
+3) **Why is a Box-Cox transformation unhelpful for the `canadian_gas` data?**
+
+Box-Cox is used when the variation of a time series increases or decreases with time. By aplying the transformation, this variation can be reduced.
+
+Let's take a look at the Canadian gas data and apply a Box-Cox:
+
+```{r}
+lambda <- canadian_gas %>% 
+    features(Volume, features = guerrero) %>% 
+    pull(lambda_guerrero)
+
+canadian_gas %>% 
+    mutate('Gas Box-Cox Adjusted' = box_cox(Volume, lambda)) %>% 
+    gather('Type', 'Value', Volume, `Gas Box-Cox Adjusted`) %>% 
+    ggplot(aes(Month, Value)) +
+    geom_line() +
+    facet_grid(vars(Type), scales = 'free') +
+    labs(
+        x = 'Quarter',
+        y = 'Gas Production (petajoules)',
+        title = 'Australian Gas Production (Box-Cox adjusted)'
+    )
+```
+
+We see that the variation incrases, but then decreases with time. This means a Box-Cox is not going to help.
+
+4) **What Box-Cox transformation would you select for your retail data (from Exercise 6 in Section 2.10)?**
+
+The data is `aus_retail`, the Box-Cox reduces a small amount of the increasing variation in the time series.
+
+```{r}
+retail_subset <-
+  aus_retail %>% 
+  filter(`Series ID` == 'A3349849A')
+
+lambda <- retail_subset %>% 
+  features(Turnover, features = guerrero) %>% 
+  pull(lambda_guerrero)
+
+retail_subset %>% 
+  mutate(`Turnover Box-Cox` = box_cox(Turnover, lambda)) %>% 
+  pivot_longer(c(Turnover, `Turnover Box-Cox`), names_to = 'Transform', values_to = 'Turnover') %>% 
+  ggplot() +
+  geom_line(aes(Month, Turnover)) +
+  facet_grid(rows = vars(Transform), scales = 'free')
+```
+
+6) **Show that a 3×5 MA is equivalent to a 7-term weighted moving average with weights of 0.067, 0.133, 0.200, 0.200, 0.200, 0.133, and 0.067.**
+
+With a single $5\text{-MA}$, $5 = 2k + 1$, thus $k = 2$, so our $t$ indicies go from $[-2, 2]$.
+
+$$ \hat{T}_{t(5)} = \frac{1}{5}( y_{t-2} + y_{t-1} + y_{t} + y_{t+1} + y_{t+2} ) $$
+
+If we then apply a $3\text{-MA}$ to this, our $k = 1$, with our indicies going from [-1,1]. This means we'll have:
+
+$$ 
+\hat{T}_t = \frac{1}{3}\big[ \\
+  \frac{1}{5}( y_{t-3} + y_{t-2} + y_{t-1} + y_{t} + y_{t+1} ) + \\
+  \frac{1}{5}( y_{t-2} + y_{t-1} + y_{t} + y_{t+1} + y_{t+2} ) + \\
+  \frac{1}{5}( y_{t-1} + y_{t} + y_{t+1} + y_{t+2} + y_{t+3} ) + \\
+\big]
+$$
+
+Summing up the indicies, there's $1 \times y_{t-3}$, $2 \times y_{t-2}$, etc.
+
+```{r}
+c(
+  1/3 *  1/5,
+  2 * (1/3) * (1/5),
+  3 * (1/3) * (1/5),
+  3 * (1/3) * (1/5),
+  3 * (1/3) * (1/5),
+  2 * (1/3) * (1/5),
+  1/3 *  1/5
+)
+```
+
+This is the same as a weighted moving average with these coefficients.
+
+7) **he fma::plastics data set consists of the monthly sales (in thousands) of product A for a plastics manufacturer for five years.**
+
+a) **Plot the time series of sales of product A. Can you identify seasonal fluctuations and/or a trend-cycle?**
+
+```{r}
+prod_a_sales <-
+  fma::plastics %>% 
+  as_tsibble() %>%  
+  rename(Month = index, Sales = value)
+    
+prod_a_sales %>% 
+  ggplot() +
+  geom_line(aes(Month, Sales)) +
+  labs(
+    title = 'Plastics Sales - Product A'
+  )
+    
+```
+
+From this we can see a generate trend upwards (no cycles), with a yearly seasonal component.
+
+b) **Use a classical multiplicative decomposition to calculate the trend-cycle and seasonal indices.**
+
+```{r}
+prod_a_sales %>% 
+  model(classical_decomposition(Sales, type = 'multiplicative')) %>% 
+  components() %>%
+  autoplot()
+```
+
+c) **Do the results upport the graphical interpretation?**
+
+Yes the results do support it.
+
+d) **Plot the seasonally adjusted data**
+
+We'll use an STL.
+
+```{r}
+prod_a_sales %>% 
+  model(STL(Sales)) %>% 
+  components() %>% 
+  ggplot() +
+  geom_line(aes(Month, season_adjust)) +
+  labs(
+    y = 'Sales',
+    title = 'Seasonally Adjusted Sales'
+  )
+```
+
+**Change one observation to be an outlier (e.g., add 500 to one observation), and recompute the seasonally adjusted data. What is the effect of the outlier?**
+
+
+```{r}
+prod_a_sales_outlier <- prod_a_sales
+prod_a_sales_outlier[3,2] <- prod_a_sales_outlier[3,2] + 500
+
+prod_a_sales_outlier %>%
+  model(STL(Sales)) %>% 
+  components() %>% 
+  ggplot() +
+  geom_line(aes(Month, season_adjust)) +
+  labs(
+    y = 'Sales',
+    title = 'Seasonally Adjusted Sales',
+    subtitle = 'Early Outlier'
+  )
+
+prod_a_sales_outlier[3,2] <- prod_a_sales_outlier[3,2] - 500
+prod_a_sales_outlier[50,2] <- prod_a_sales_outlier[50,2] + 500
+
+prod_a_sales_outlier %>%
+  model(STL(Sales)) %>% 
+  components() %>% 
+  ggplot() +
+  geom_line(aes(Month, season_adjust)) +
+  labs(
+    y = 'Sales',
+    title = 'Seasonally Adjusted Sales',
+    subtitle = 'Late Outlier'
+  )
+```
+
+With STL the outlier has a large effect on the seasonally adjusted sales. Appears to have a lower effect on the adjusted adjusted sales later.
+
+9) **Figures 3.16 and 3.17 show the result of decomposing the number of persons in the civilian labour force in Australia each month from February 1978 to August 1995.**
+
+```{r}
+aus_labour_comp <-
+  labour %>% 
+  as_tsibble() %>% 
+  model(STL(value)) %>% 
+  components()
+
+aus_labour_comp %>% 
+  autoplot() +
+  labs(
+    x = 'Year',
+    y = 'Persons (thousands)',
+    title = 'STL Decomposition - Australian Labour Force'
+  )
+
+aus_labour_comp %>% 
+  gg_subseries(season_year)
+```
+
+a) **Write about 3–5 sentences describing the results of the decomposition. **
+
+We first take a look at the seasonal component of labour. THere is a large rise just before Christmas, with a drop off over the summar holidays. This picks back up again, slowly diminishing into Winter.
+
+We don't see any cycles over the long term, but we do see a flattening around 1991/1992. This lines up with the recession that ocurred then.
+
+10) **This exercise uses the canadian_gas data (monthly Canadian gas production in billions of cubic metres, January 1960 – February 2005). **
+
+a) **Plot the data using autoplot(), gg_subseries() and gg_season() to look at the effect of the changing seasonality over time. What do you think is causing it to change so much?**
+
+```{r}
+canadian_gas %>% 
+  autoplot()
+
+canadian_gas %>%
+  gg_subseries()
+
+canadian_gas %>% 
+  gg_season()
+```
+
+b) **Do an STL decomposition of the data. You will need to choose a seasonal window to allow for the changing shape of the seasonal component.**
+
+```{r}
+canadian_gas %>% 
+  model(
+    Periodic = STL(Volume ~ season(window = 'periodic')),
+    Default = STL(Volume)
+  ) %>% 
+  components() %>% 
+  autoplot()
+```
+
+c) **How does the seasonal shape change over time? [Hint: Try plotting the seasonal component using gg_seas).]**
+
+The volume of gas production was flat in the 1970s, however it has changed to be much more variable within a season. 
+
+d) **Can you produce a plausible seasonally adjusted series?**
+
+```{r}
+canadian_gas %>% 
+  model(
+    Periodic = STL(Volume ~ season(window = 'periodic')),
+    Default = STL(Volume)
+  ) %>% 
+  components() %>% 
+  ggplot() +
+  geom_line(aes(Month, season_adjust)) +
+  facet_grid(rows = vars(.model))
+```
+
+The change in variability of the season in the 1980s will makes it difficult to produce a seasonally adjusted series. 
