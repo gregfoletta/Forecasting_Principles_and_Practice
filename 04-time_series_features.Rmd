@@ -1,0 +1,271 @@
+---
+title: "Chapter 4 - Time Series Features"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+library(forecast)
+library(feasts)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+```
+
+The `feasts` package includes functions for computing features and statistics from time series.
+
+We've seen some: autocorrelations, as well as Guerrero estimate of the Box-Cox transformation parameter.
+
+## Simple Statistics
+
+Any numerical summary computed from a time series is a feature. This could be mean, minimum, maximum, etc.
+
+The `features()` function helps compute these features. The following is the mean:
+
+```{r, message = FALSE}
+tourism %>% features(Trips, mean)
+```
+
+A list of functions helps name the columns:
+
+```{r}
+tourism %>% 
+    features(Trips, list(Mean = mean)) %>% 
+    arrange(Mean)
+```
+
+Let's look at quantiles, the third argument to features is passed to the function that's being called. 0% is the minimum and 100% is the maximum.
+
+```{r}
+tourism %>% 
+    features(Trips, quantile, probs = seq(0, 1, 0.25))
+```
+
+# ACF Features
+
+All the autocorrelations of a series can be considered features. The autocorrelations themselves can be summarised to produce new features. An example: the sum of the first ten autocorrelation coefficients is a useful summary of how much autocorrelation there is in a series, regardless of lag.
+
+We can also compute autocorrelations of transformations of time series. It is useful to look at changes in the series between periods by 'differencing' the data.
+
+Another approach is to compute seasonal differences in the data - i.e. the difference between consecutive Januaries to look at how the series is changing between years.
+
+We recall that the autocorrelation coefficients are standard $Cor(Y_i, Y_{i+k})$ where $k$ is the lag.
+
+The `feat_acf()` function computes a selection of autocorrelatations. It returns six/seven features:
+
+- The first autocorrelation coefficient from the original data.
+- The sum of squares of the first ten autocorrelation coefficients from the original data.
+- The first autocorrelation coefficient from the differenced data.
+- The sum of squares of the first ten autocorrelation coefficients from the differenced data.
+- The same as above for twice-differenced data.
+- For seasonal data, the autocorrelation coefficient at the first seasonal lag is also returned.
+
+Application to the Australian tourism data:
+
+```{r}
+tourism %>% 
+    features(Trips, feat_acf)
+```
+
+# STL Features
+
+The STL decompositions are the basis for several more features.
+
+A time series decomposition can be used to measure the strength of trend and seasonality in a time series.
+
+We recall that $y_t = T_t + S_t + R_t$. For strongly trended data, the seasonally adjusted data should have much more variation than the remainder, so $Var(R_t)/Var(T_t + R_t)$ should be relatively small. But for data with no trend, the variances should approximately the same.
+
+The **strength of the trend** is defined as:
+
+$$ F_T  = max\Bigg(0, 1 - \frac{Var(R_t)}{Var(T_t + R_t)} \Bigg)$$
+
+Because the variances of the remainder may be larger then the variance of the seasonally adjusted data, the minimum is set to 0.
+
+The **strength of the seasonality** is defined similarly, but with respect to the detrended data rather than the seasonally adjusted data.
+
+$$ F_S  = max\Bigg(0, 1 - \frac{Var(R_t)}{Var(S_t + R_t)} \Bigg)$$
+
+A series with $F_S$ close to zero has almost no seasonality, which a series with strong seasonality will have $F_S$ close to 1.
+
+With STL, the timing of the peaks and troughs is also useful. This tells us which month or quarter contains the largest seasonal component.
+
+These are available in the `feat_stl` functon.
+
+```{r}
+tourism %>% 
+    features(Trips, feat_stl) %>% 
+    head()
+```
+
+We can use these features to identify what type of series are trended and what are most seasonal:
+
+```{r}
+tourism %>% 
+    features(Trips, feat_stl) %>% 
+    ggplot() +
+    geom_point(aes(trend_strength, seasonal_strength_year, colour = Purpose)) +
+    facet_wrap(vars(State)) +
+    labs(
+        x = 'Trend Strength',
+        y = 'Seasonal Strength',
+        title = 'Australian Tourism',
+        subtitle = 'Trend vs Seasonal Strength per State'
+    )
+    
+```
+
+From this we see that the holiday series are the most seasonal, and the strongest trends seems to be in Western Australa.
+
+Seasonal series can be identified and plotted:
+
+```{r}
+tourism %>% 
+    features(Trips, feat_stl) %>% 
+    filter(seasonal_strength_year == max(seasonal_strength_year)) %>% 
+    left_join(tourism, by = c('State', 'Region', 'Purpose')) %>% 
+    ggplot() +
+    geom_line(aes(Quarter, Trips)) +
+    facet_grid(vars(State, Region, Purpose))
+```
+
+This shows holiday trips to the most popular ski region of Australia.
+
+The `feat_stl` has other features:
+
+- `spikiness` measures the prevalence of spikes in the remainder component $R_t$ of the STL.
+- `linearity` measures the linearity of the trend component of the STL. It's based on the coefficient of a linear regression applied to the trend component.
+- `curvature` measures the curvature of the trend component. It's based on the coefficient from an orthogonal quadratic regression applied to the trend component.
+- `stl_e_acf1` is the first autocorrelation coefficient of the remainder series.
+- `stl_e_acf10` is the sum of squares of the first ten autocorrelaton coefficients of the remainder series.
+
+# Other Features
+
+The following is a reference for other features calculated by the `feasts` package:
+
+- `coef_hurst` is the Hurst coefficient, which is a measure of 'long memory'. A series with long memory will have a significant autocorrelatons for many lags.
+- `spectral_entropy` computes the Shannon spectral entropy. This is a measure of how easy the series is to forecast. A series with strong trend and seasonality will have entropy close to 0.
+- `bp_stat` - Box-Pierce statistic, tests if a time series is white noise, with `bp_pvalue` gives the p-value from the test.
+- `lb_stat` - Ljung-Box statistic, similar to above.
+- `diff1_pacf5` is the sum of squares of the first five partial autocorrelatons from the differenced data.
+- `diff2_pacf5` is the same as above but *for the second difference*?
+- `season_pacf` contains partial autocorrelation at the first seasonal lag.
+- `kpss_stat` is the Kwiatkowski-Phillips-Schmidt-Shin statistic for testing of a series is stationary, which `kpss_pvalue` is the p-value from the test.
+- `pp_stat` givres the Phillps-Perron statistic which tests if the series is non-stationary.
+- `ndiffs` gives the number of differences required to lead to a stationary series based on the KPSS test
+- `nsdiffs` gives the number of seasonal differences required to make the series stationary.
+- `var_tiled_mean` gives the variances of the tiled means, which are the means of consecutive non-overlapping blocks of observations.
+    - Default leangth is 10 for non-seasonal, or the length of the seasonal period.
+    - Sometimes called the 'stability' feature.
+- `var_tiles_var` - same as above, but variance.
+    - Sometimes called the 'lumpiness' feature.
+- `shift_levels_max` finds the largest mean shift between two consecutive sliding windows of the time series.
+    - Useful for finding sudden jumps or drops in a time series.
+    - `shift_level_index` gives the index for above.
+- `shift_var_max` finds the largest variance shifdt.
+    - Useful for finding sudden changes in volatility.
+    - `shift_var_index` is the index for above.
+- `shift_kl_max` finds the largest distributional shift (based on the Kulback-Leibler divergece) between two consecutive sliding windows of the time series.
+    - Useful for finding sudden changes in the distribution of a time series.
+    - `shift_kl_index` is the index for above.
+- `n_crossing_points` is the number of times a time series crosses the median.
+- `n_flat_spots` is the number of sections of the data where the series is relatively unchanging.
+- `stat_arch_lm` returns the statistic based on the **Lagrange Multiplier** test of Engle for autoregressive conditional heteroscedasticity (ARCH).
+
+# Exploring Tourism Data
+
+```{r}
+tourism_features <-
+    tourism %>% 
+    features(Trips, feature_set('feasts'))
+```
+
+There are 39 features for every combination of three key variables (`Region`, `State` and `Purpose`, these are the index variables in the tsibble).
+
+We'll create a scatterplot matrix of groups of features, starting with seasonality:
+
+```{r, message = FALSE}
+library(glue)
+
+tourism_features %>% 
+    select_at(vars(contains('season'), Purpose)) %>% 
+    mutate(
+        seasonal_peak_year = glue("Q{seasonal_peak_year + 1}"),
+        seasonal_trough_year = glue("Q{seasonal_trough_year + 1}")
+    ) %>% 
+    GGally::ggpairs(aes(colour = Purpose))
+        
+```
+
+What do we learn from this?
+
+- The three measures related to seasonality are all positively correlated.
+- The bottom left and top right show that the most strongly seasonal series are related to holidays.
+- The bar plots in the bottom row show tht seasonal peaks in business occur most often in quarter 4, and least often in Q2.
+
+It can be difficult to interpret this mess if lines and colour. Dimensional reduction via PCA gives the linear components that explain the most variation.
+
+```{r}
+library(broom)
+
+tourism_pca <-
+    tourism_features %>% 
+    select(-c(State, Region, Purpose)) %>%
+    prcomp(scale = TRUE) %>% 
+    augment(tourism_features)
+
+tourism_pca %>% 
+    ggplot() +
+    geom_point(aes(.fittedPC1, .fittedPC2, colour = Purpose)) +
+    theme(aspect.ratio = 1) +
+    labs(
+        x = 'Principal Component 1',
+        y = 'Principal Component 2',
+        title = 'Australian Tourism - Seasonal Features',
+        subtitle = 'Principal Components Analysis'
+    )
+```
+
+From this we see that the holioday series behave a lot differently from the rest of the series. Almost all of the holidays are in the top half, so the second principal component is distinguishing between holidays and the rest.
+
+We can also see anomolous series, which appear far out from the rest.
+
+```{r}
+tourism_pca %>% 
+    filter(.fittedPC1 > 12) %>% 
+    select(Region, State, Purpose, .fittedPC1, .fittedPC2) %>% 
+    left_join(tourism, by = c('State', 'Region', 'Purpose')) %>% 
+    mutate(Series = glue('{State}', '{Region}', '{Purpose}', .sep = "\n\n")) %>% 
+    ggplot() +
+    geom_line(aes(Quarter, Trips)) +
+    facet_grid(vars(Series), scales = 'free') +
+    labs(
+        title = 'Australian Tourism',
+        subtitle = 'Outliers in Principal Component Space'
+    )
+```
+
+What do we see? Melbourne holidays are different because there is no seasonality. Western Australian business is interesting because of the lack of seasonality and a large jump in the last few years.
+
+# Exercises
+
+1) **Write a function to compute the mean and standard deviation of a time series, and apply it to the `PBS` data. Plot the series with the highest mean, and the series with the lowest standard deviation.**
+
+2) **Use `GGally::ggpairs()` to look at the relationships between the STL-based features for the `tourism` data. Which is the peak quarter for holidays in each state?**
+
+3) **Use a feature-based approach to look for outlying series in the `PBS` data. What is unusual about the series you identify as “outliers”.**

@@ -23,6 +23,8 @@ output:
 
 # Chapter 4 - Time Series Features
 
+* [Notes & Exercises](04-time_series_features.html)
+
 # Chapter 5 - The Forecaster's Toolbox
 
 * [Notes & Exercises](05-forecasters_toolbox.html)
