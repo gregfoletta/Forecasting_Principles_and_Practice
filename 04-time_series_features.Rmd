@@ -266,6 +266,37 @@ What do we see? Melbourne holidays are different because there is no seasonality
 
 1) **Write a function to compute the mean and standard deviation of a time series, and apply it to the `PBS` data. Plot the series with the highest mean, and the series with the lowest standard deviation.**
 
+```{r}
+mean_and_sd <- function(x) {
+    c(
+        mean = mean(x),
+        sd = sd(x)
+    )
+}
+
+PBS %>%
+    features(Cost, mean_and_sd) %>% 
+    filter(mean == max(mean)) %>% 
+    left_join(PBS, by = c('Concession', 'Type', 'ATC1', 'ATC2')) %>% 
+    select(Month, Concession, Type, Cost) %>%
+    as_tsibble(index = Month) %>% 
+    ggplot() +
+    geom_line(aes(Month, Cost))
+```
+
+
 2) **Use `GGally::ggpairs()` to look at the relationships between the STL-based features for the `tourism` data. Which is the peak quarter for holidays in each state?**
+
+```{r, message = FALSE}
+tourism_features %>%
+    select(seasonal_peak_year, State) %>% 
+    mutate(
+        seasonal_peak_year = glue("Q{seasonal_peak_year + 1}"),
+    ) %>% 
+    GGally::ggpairs(aes(colour = State)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+    
+```
+
 
 3) **Use a feature-based approach to look for outlying series in the `PBS` data. What is unusual about the series you identify as “outliers”.**

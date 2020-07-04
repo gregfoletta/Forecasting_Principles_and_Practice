@@ -21,41 +21,115 @@ knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
 ```
 
 
-# TS Objects
+# Tsibble Objects
 
-A time series can be thought of as a list of numbers, along with some information about what times those numbers were recorded. You can use the `ts()` object, or the tidyverse `tsibble()`.
+A time series can be thought of as a list of numbers, along with some information about what times those numbers were recorded (the index). A `tsibble` object can be used for this.
 
-```{r, message = FALSE}
+## Index
+
+Consider observations over a number of years:
+
+```{r}
 library(tsibble)
-library(vctrs)
-library(lubridate)
+library(fpp3)
 
+y <- tsibble(
+  Year = 2000:2008,
+  Observation = c(23, 342, 66, 122, 5445, 44, 77, 104, 23),
+  index = Year
+)
+```
 
-y <- ts(c(1, 34, 454, 34, 6), start = 2012)
-x <- tsibble(
-    date = seq(as.Date('2010-01-01'), as.Date('2019-01-01'), by = 'years'),
-    value = rnorm(10)
+Tsibbles extend the tibble by adding in temporal structure. For observations ocurring more than once a year, a time class function needs to be used.
+
+```{r}
+z <- tsibble(
+  Month = yearmonth(c('2019 Jan', '2019 Feb', '2019 Mar')),
+  Obs = seq(40, 50, length.out = 3),
+  index = Month
 )
 
-print(y)
-print(x)
+z 
 ```
+
+Other time class functions:
+
+- Annual: `start_year:end_year`
+- Quarterly: `yearquarter()`
+- Monthly: `yearmonth()`
+- Weekly: `yearweek()`
+- Daily: `as_date()`, `ymd()`
+-Sub-daily: `as_datetime()`
+
+## Key Variables
+
+A tsibble allows multiple time series to be stored in a single object. Consider men's and women's track races at the Olympics:
+
+```{r}
+olympic_running
+```
+
+The [4Y] informs us that the interval of observation is every 4 years. Below this is the key structure. This tells us that there are 14 different time series in the tsibble.
+
+The 14 time series are uniquely identified by `Length` and `Sex`.
+
+## Functions
+
+The usual functions apply:
+
+- `filter()` to filter out values.
+- `select()` to select variables.
+  - Note the index variable is returned even if it is not selected.
+  - There cannot be duplicate rows for each index.
+- `summarise()` to sumamrise data across keys.
+- `mutate()` to create new variables.
+
+# Reading in a CSV
+
+```{r}
+prison <-
+  readr::read_csv('https://OTexts.com/fpp3/extrafiles/prison_population.csv') %>% 
+  mutate(Quarter = yearquarter(date)) %>% 
+  select(-date) %>% 
+  as_tibble(
+    index = Quarter,
+    key = c(state, gender, legal, indigenous)
+  )
+
+prison
+```
+
+# Seasonal Period
+
+Some graphics and some models will use the seasonal period of the data. This is the number of observations before the seasonal pattern repeats. In most cases this is detected using the time idnex variable.
+
+For quarterly monthly and weekly data, there is only one seasonal period - the number of observations within a year.
+
+If the data is observed more than once per week, then there is often more than one seasonal pattern in the data. For example, data with daily observations may have weekly and yearly seasonal patterns. 
+
+Similarly data every minute may have hourly, daily, weekly and annual seasonality.
+
+More complicated seasonal patterns can be specified using the `period()` function.
+
+```{r}
+period(second = 10, minute = 20)
+```
+
+
 
 # Time Plots
 
-FOr time series data, the obvious graph is a time plot. The observations are plotted against the time of observation.
+For time series data, the obvious graph is a time plot. The observations are plotted against the time of observation.
 
-```{r, message = FALSE}
-# Library of time series data
-library(tsibbledata)
-# ggplot2 scales
-library(scales)
-
+```{r}
 ansett %>% 
-  filter(Airports == 'MEL-SYD') %>% 
+  filter(Airports == 'MEL-SYD' & Class == 'Economy') %>% 
   ggplot() +
-  geom_line(aes(Week, Passengers, colour = Class))
-
+  geom_line(aes(Week, Passengers)) +
+  labs(
+    title = 'Ansett Economy Class Passengers',
+    subtitle = 'Melbourne - Sydney'
+  )
 ```
 
 
@@ -72,9 +146,8 @@ Any model will need to take all these features into account in order to effectiv
 A simpler series:
 
 ```{r, message = FALSE}
-library(fpp)
-
-a10 %>% 
+fpp::a10 %>%
+  as_tsibble() %>% 
   autoplot() +
   labs(
     title = 'Antidiabetic Drig Sales',
@@ -106,26 +179,41 @@ A seasonal plot is similar to a time plot except the data are plotten against th
 Note: the ggplot2 code for `ggseasonplot()` can be [found here](https://github.com/robjhyndman/forecast/blob/6e36927a90a58d3f015b8c0a77598a9aa5ed5282/R/ggplot.R).
 
 ```{r, message = FALSE}
-library(forecast)
-
-ggseasonplot(a10, year.labels = TRUE)
+fpp::a10 %>% 
+  as_tsibble() %>% 
+  gg_season(labels = 'both') +
+  labs(
+    x = 'Month',
+    y = '$ (millions)',
+    title = 'Antidiabetic Drug Sales',
+    subtitle = 'Seasonal Plot'
+  )
 ```
 
 In this it's clear that there's a large jump in sales each January - these are probably December sales not registered until the next month.
 
-A useful variation is to view the seasonal data using polar coordinates:
+# Multiple Seasonal Periods
+
+Where the data has more than one seasonal pattern, the `period` argument can be sed to select which seasonal plot is required:
 
 ```{r}
-a10 %>% 
-  ggseasonplot(polar = TRUE)
+vic_elec %>% 
+  gg_season(Demand, period = 'day') +
+  labs(
+    title = 'Victorian Energy Demand',
+    subtitle = 'Daily Seasonal Plot'
+  )
 ```
 
+
 # Seasonal Subseries Plots
-An alternate plot that emphasises the seasonabl pattern is where the data for each season is collected into separate time series plots:
+
+An alternate plot that emphasises the seasonal pattern is where the data for each season is collected into separate time series plots:
 
 ```{r}
-a10 %>% 
-  ggsubseriesplot() +
+fpp::a10 %>% 
+  as_tsibble() %>% 
+  gg_subseries(value) +
   labs(
     x = 'Month',
     y = '$ million',
@@ -198,7 +286,7 @@ visnights[,1:5] %>%
 
 To see the relationships between the time series, it can be arranged into a scatterplot matrix:
 
-```{r}
+```{r, message = FALSE}
 library(GGally)
 
 visnights[,1:4] %>% 
@@ -219,9 +307,9 @@ The figure below shows the quarterly Australian beer production, where the horiz
 Each grah shows $y_t$ plotted against $y_{t - k}$ for different values of $k$.
 
 ```{r}
-ausbeer %>% 
-  window(start = 1992) %>% 
-  gglagplot()
+aus_production %>% 
+  filter(year(Quarter) >= 1992) %>% 
+  gg_lag(Beer, geom = 'point')
 ```
 
 What we can see is that there is a positive relationship at lags 4 and 8, reflecting a strong seasonality. The negative relationship seen for lags 2 and 6 occurs because peaks (in Q4) are plotted against troughs (in Q2).
@@ -233,10 +321,25 @@ Autocorrelation measures the linear relationships between *lagged values* of the
 There are several autocorrelation coefficients corresponding to each panel in the graph above. The autocorrelation coefficients are plotted to show the *autocorrelation function* or *ACF*.
 
 ```{r}
-ausbeer %>% 
-  window(start = 1992) %>%
-  ggAcf()
+aus_production %>% 
+  filter(year(Quarter) >= 1992) %>% 
+  ACF(Beer, lag_max = 9)
 ```
+
+These can be plotted in a *correlogram*:
+
+```{r}
+aus_production %>% 
+  filter(year(Quarter) >= 1992) %>% 
+  ACF(Beer) %>% 
+  autoplot() +
+  labs(
+    x = 'Autocorrelation',
+    y = 'Lag (Quarter)',
+    title = 'Australian Beer Production - Autocorrelation'
+  )
+```
+
 
 In this graph $r_4$ is higher than for the other lags. This is due to the seasonal pattern in the data. The peaks tend to be four quarters apart.
 
@@ -251,18 +354,16 @@ When data are seasonal, the autocorrelatons will be larger for the seasonal lags
 When data are both trended **and** seasonal, you see the combination of these effects:
 
 ```{r}
-elec %>% 
-  window(start = 1980) %>%
+fpp::a10 %>% 
+  as_tsibble() %>% 
+  ACF(value, lag_max = 48) %>% 
   autoplot() +
   labs(
     x = 'Year',
-    y = 'GWh',
-    title = 'Australian Electricity Demand'
+    y = 'Correlation',
+    title = 'Anti-diabetic Drug Sales',
+    subtitle = 'Autocorrelation'
   )
-
-elec %>% 
-  window(start = 1980) %>% 
-  ggAcf(lag = 48)
 ```
 
 The slow decrease is due to the trend, while the dips are due to the seasonality.
@@ -274,14 +375,22 @@ Time series that show no autocorrelation are called **white noise**:
 ```{r}
 set.seed(1)
 
-y <- ts(rnorm(200))
+y <- tsibble(sample = 1:50, wn = rnorm(50), index = sample)
 
 y %>% 
-  as_tsibble() %>% 
   ggplot() +
-  geom_line(aes(index, value))
+  geom_line(aes(sample, wn)) +
+  labs(
+    title = 'White Noise',
+    x = 'Sample',
+    y = 'Value'
+  )
 
-ggAcf(y)
+y %>% 
+  ACF(wn) %>% 
+  autoplot() %>% 
+  labs(title = 'White Noise Autocorrelation')
+
 ```
 
 For white noise, we expect autocorrelation to be close to 0, but not exactly as there is some random variation. For a white noise series, we expect 95% of the spikes in the ACF to lie within $\pm 2 / \sqrt{T}$, where $T$ is the length of the time series. These are the blue lines in the ACF plot. If one or more large spikes, or more than 5%, are outside the lines, it's probably not white noise.
