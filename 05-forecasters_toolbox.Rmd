@@ -26,6 +26,7 @@ library(magrittr)
 library(fpp3)
 library(tsibble)
 library(lubridate)
+library(feasts)
 ```
 
 
@@ -742,3 +743,468 @@ beer_forecast %>%
 It's already obvious from the graph that the seasonal naive is the best model.
 
 # Time Series Cross-Validation
+
+In time series cross validation there are a series of test sets with one observation. The training set consists only of observations that ocurred **prior** to the test observation. Since a large number of observations are needed to train, the early observations are not considered in the test set.
+
+The forecast accuracy is calculated by averaging over all of the test sets.
+
+The cross-validation procedure can be modified to allow multi-step errors to be used.
+
+## Example
+
+```{r}
+google_2015_train <-
+  google_2015 %>% 
+  slice(1 : n() - 1) %>%
+  stretch_tsibble(.init = 3, .step = 1)
+
+google_2015_fc <-
+  google_2015_train %>% 
+  model(RW(Close ~ drift())) %>% 
+  forecast(h = 1)
+
+google_2015_fc %>% accuracy(google_2015)
+
+# Residual accuracy
+google_2015 %>% 
+  model(RW(Close ~ drift())) %>% accuracy()
+```
+
+# Exercises
+
+1) **Produce forecasts for the following series using whichever of `NAIVE(y)`, `SNAIVE(y)` or `RW(y ~ drift())` is more appropriate in each case:**
+
+- **Australian Population (global_economy)**
+
+The population moves up without any seasonal factors, so a drift would be the most appropriate.
+
+```{r}
+global_economy %>%
+  filter(Code == 'AUS') %>% 
+  model(Drift = RW(Population ~ drift())) %>% 
+  forecast(h = 10) %>% 
+  autoplot(global_economy) +
+  labs(
+    title = 'Australian Population',
+    subtitle = 'Drift Forecast'
+  )
+```
+
+- **Bricks (aus_production)**
+
+We'll try a seasonal naive:
+
+```{r}
+aus_production %>% 
+  drop_na(Bricks) %>% 
+  model(snaive = SNAIVE(Bricks)) %>% 
+  forecast(h = 20) %>% 
+  autoplot(aus_production)
+```
+
+- **NSW Lambs (aus_livestock)**
+
+```{r}
+nsw_lambs <- 
+  aus_livestock %>% 
+  filter(Animal == 'Lambs' & State == 'New South Wales')
+
+nsw_lambs %>%
+  model(drift = RW(Count ~ drift())) %>% 
+  forecast(h = 30) %>% 
+  autoplot(nsw_lambs)
+```
+
+
+2) **Use the Facebook stock price (data set gafa_stock) to do the following:**
+
+- **Produce a time plot of the series.**
+
+```{r}
+google_stock <- 
+  gafa_stock %>% 
+  filter(Symbol == 'GOOG')
+
+google_stock %>% autoplot(Close)
+```
+
+- **Produce forecasts using the drift method and plot them.**
+
+```{r}
+google_forecast <-
+  google_stock %>% 
+  filter_index('2018' ~ .) %>% 
+  fill_gaps() %>% 
+  model(drift = RW(Close ~ drift())) %>% 
+  forecast(h = 100)
+
+google_forecast %>% autoplot(filter_index(google_stock, '2018' ~ .))
+```
+
+- **Show that the forecasts are identical to extending the line drawn between the first and last observations.**
+
+```{r}
+google_forecast %>% 
+  autoplot(filter_index(google_stock, '2018' ~ .)) +
+  geom_segment(
+    aes(
+      x = Date[1],
+      y = Close[1],
+      xend = Date[length(Date)],
+      yend = Close[length(Close)]
+    ),
+    color = 'red',
+    linetype = 'dashed'
+  )
+```
+
+    Try using some of the other benchmark functions to forecast the same data set. Which do you think is best? Why?
+
+```{r}
+google_stock %>%
+  filter_index('2016' ~ .) %>% 
+  fill_gaps() %>% 
+  model(
+    Mean = MEAN(Close),
+    Naive = NAIVE(Close),
+    `Seasonal Naive` = SNAIVE(Close),
+    Drift = RW(Close ~ drift())
+  ) %>% 
+  forecast(h = 400) %>% 
+  autoplot(filter_index(google_stock, '2016' ~ .), level = NULL)
+```
+
+Which one is going to be best? Stock price is such a random process that it would be hard to even guess.
+
+
+3) **Produce forecasts for all of the Victorian series in aus_livestock using SNAIVE(). Plot the resulting forecasts including the historical data. Is this a reasonable benchmark for these series?**
+
+```{r}
+vic_livestock <-
+  aus_livestock %>%
+  filter(Animal == 'Calves' | Animal == 'Lambs') %>% 
+  filter(State == 'Victoria')
+
+vic_livestock %>% 
+  model(`Seasonal Naive` = SNAIVE(Count)) %>% 
+  forecast(h = 50) %>% 
+  autoplot(vic_livestock)
+```
+
+From a purely visual perspective, the seasonal naive does look like a reasonable benchmark for these series.
+
+4) **Calculate the residuals from a seasonal naïve forecast applied to the quarterly Australian beer production data from 1992.**
+
+```{r}
+post_1992_beer <- 
+  aus_production %>% 
+  filter_index('1992' ~ .)
+
+beer_fit <-
+  post_1992_beer %>% 
+  model(snaive = SNAIVE(Beer))
+  
+beer_fit %>% gg_tsresiduals()
+
+beer_fit %>% 
+  forecast(h = 20) %>%
+  autoplot(post_1992_beer)
+```
+
+We can conclude that the beer production is very seasonal, with a lag of 4 quarters (1 year).
+
+5) **Repeat the previous exercise using the Australian Exports series from global_economy and the Bricks series from aus_production. Use whichever of NAIVE() or SNAIVE() is more appropriate in each case.**
+
+```{r}
+# Looking and the series
+aus_economy <-
+  global_economy %>% 
+  filter(Code == 'AUS')
+
+aus_economy %>%
+  autoplot(Exports)
+
+# There doesn't appear to be seasonality, only trend and cycle.
+# Naive is more appropritate in this case
+aus_export_model <-
+  aus_economy %>% 
+  model(naive = NAIVE(Exports))
+
+aus_export_model %>% gg_tsresiduals()
+
+aus_export_model %>% 
+  forecast(h = 10) %>% 
+  autoplot(aus_economy)
+```
+
+
+6) **Are the following statements true or false? Explain your answer.**
+- **Good forecast methods should have normally distributed residuals.**
+  - A good forecast doesn't necessarily need normally distributed residuals, however they are needed in order to get good prediction intervals.
+- **A model with small residuals will give good forecasts.**
+  - A model with small residuals means it has been fit well, however it doesn't necessarily mean it will give good forecasts.
+- **The best measure of forecast accuracy is MAPE.**
+  - It recommended (Hyndman and Koehler) that MAPE *not* be used.
+- **If your model doesn’t forecast well, you should make it more complicated.**
+  - Making a model more complicated generally means making it more flexible. You may be able to get a better fit to the training data, but these high variance, low bias models will likely perform worse on a test set.
+- **Always choose the model with the best forecast accuracy as measured on the test set.**
+  - If you want to use the model for forecasting, then this is correct.
+  
+7) **For your retail time series (from Exercise 6 in Section 2.10):**
+
+a) **Create a training dataset consisting of observations before 2011:**
+
+```{r}
+aus_retail_hospitality <- aus_retail %>% 
+  filter(`Series ID` == 'A3349640L')
+
+aus_retail_hospitality_train <-
+  aus_retail_hospitality %>% 
+  filter_index(. ~ '2011')
+```
+
+b) **Check that your data have been split appropriately by producing the following plot.**
+
+```{r}
+aus_retail_hospitality %>% 
+  autoplot(Turnover) + 
+  autolayer(aus_retail_hospitality_train, Turnover, colour = 'blue')
+```
+
+c) **Calculate seasonal naïve forecasts using SNAIVE() applied to your training data**
+
+```{r}
+aus_retail_model <-
+  aus_retail_hospitality_train %>% 
+  model(`seasonal naive` = SNAIVE(Turnover))
+
+aus_retail_forecast <-
+  aus_retail_model %>% 
+  forecast()
+```
+
+d) **Compare the accuracy of your forecasts against the actual values.**
+
+```{r}
+aus_retail_model %>% accuracy()
+aus_retail_forecast %>% accuracy(aus_retail_hospitality)
+```
+
+e) **Check the residuals.**
+
+```{r}
+aus_retail_model %>% gg_tsresiduals()
+```
+
+The residuals are correlated, with a 24 month seasonal pattern. The residuals look resonably normal, with the exception that there seems to be a bias towards positive residuals.
+
+f) **How sensitive are the accuracy measures to the amount of training data used?**
+
+```{r}
+snaive_accuracy <- function(var, train, test) {
+  train %>% 
+  model(SNAIVE({{ var }})) %>% 
+  forecast() %>% 
+  accuracy(test) %>% 
+  pull(RMSE)
+}
+
+years <- c(1987:2011)
+
+years %>%
+  as.character() %>% 
+  map(~filter_index(aus_retail_hospitality, . ~ .x)) %>% 
+  map_dbl(~snaive_accuracy(Turnover, .x, aus_retail_hospitality)) %>% {
+  tibble(
+    rmse = .,
+    year_range = years
+  )
+} %>% 
+  ggplot(aes(years, rmse)) +
+  geom_line() +
+  geom_point() + 
+  labs(
+    x = 'Year Range: 1982 - x',
+    y = 'RMSE of SNAIVE Model',
+    title = 'RMSE of Test Error'
+  )
+```
+
+We can see that the RMSE is stable until post-1996. When including data from 1982 until here, the RMSE starts to increase. 
+
+8) **Consider the number of pigs slaughtered in New South Wales (data set aus_livestock).**
+
+a) **Produce some plots of the data in order to become familiar with it.**
+
+```{r}
+au_pigs <-
+  aus_livestock %>% 
+  filter(Animal == 'Pigs' & State == 'New South Wales')
+
+au_pigs %>% gg_tsdisplay(Count)
+```
+
+b. **Create a training set of 486 observations, witholding a test set of 72 observations (6 years).**
+
+```{r}
+au_pigs_train <- au_pigs %>% 
+  mutate(id = 1:n()) %>% 
+  filter(id <= 486) %>% 
+  select(-id)
+
+au_pigs_test <- au_pigs %>% 
+  mutate(id = 1:n()) %>% 
+  filter(id > 486) %>% 
+  select(-id)
+```
+
+c. **Try using various benchmark methods to forecast the training set and compare the results on the test set. Which method did best?**
+
+```{r}
+au_pigs_models <-
+  au_pigs_train %>% 
+  model(
+    mean = MEAN(Count),
+    naive = NAIVE(Count),
+    snaive = SNAIVE(Count),
+    drift = RW(Count ~ drift())
+  )
+
+au_pigs_models %>% 
+  forecast(au_pigs_test) %>% 
+  accuracy(au_pigs_test)
+```
+
+The seasonal naive method appears to have the best result on the test data.
+
+d. **Check the residuals of your preferred method. Do they resemble white noise?**
+
+We recall that the residuals are the terms from the training set, not the test set. Those would be the error terms.
+
+```{r}
+au_pigs_models %>%
+  select(snaive) %>% 
+  gg_tsresiduals()
+```
+
+The residuals do not appear like white noise, there is some correlation within the first 6 months.
+
+9. **Create a training set for household wealth (`hh_budget`) by witholding the last four years as a test set.**
+```{r}
+library(tsibbledata)
+
+hh_budget_train <-
+  hh_budget %>%
+  filter_index(. ~ '2012')
+
+hh_budget_test <-
+  hh_budget %>% 
+  filter_index('2013' ~ .)
+```
+
+a. **Fit all the appropriate benchmark methods to the training set and forecast the periods covered by the test set.**
+
+```{r}
+hh_budget_models <-
+  hh_budget_train %>% 
+  model(
+    mean = MEAN(Wealth),
+    naive = NAIVE(Wealth),
+    snaive = SNAIVE(Wealth),
+    drift = RW(Wealth ~ drift())
+  )
+
+hh_budget_forecast <-
+  hh_budget_models %>% 
+  forecast(hh_budget_test)
+```
+
+b. **Compute the accuracy of your forecasts. Which method does best?**
+
+```{r}
+hh_budget_forecast %>% accuracy(hh_budget_test) %>%
+  group_by(Country) %>% 
+  arrange(RMSE) %>% 
+  slice(1)
+```
+
+The drift model had the best result (measured using RMSE) against 3 out of the 4 countries in the series. The exception was the USA series where the naive method returned the best RMSE.
+
+
+c. **Do the residuals from the best method resemble white noise?**
+
+```{r}
+hh_budget_models %>% 
+  slice(1) %>% 
+  select(naive) %>% 
+  gg_tsresiduals()
+
+hh_budget_models %>% 
+  slice(2) %>% 
+  select(naive) %>% 
+  gg_tsresiduals()
+```
+
+The residuals do appear as white noise.
+
+10. **Create a training set for Australian takeaway food turnover (aus_retail) by witholding the last four years as a test set.**
+
+```{r}
+aus_takeaway_turnover <-
+  aus_retail %>%
+  filter(Industry == 'Takeaway food services')
+
+aus_taway_train <-
+  aus_takeaway_turnover %>% 
+  filter_index(. ~ '1994')
+  
+aus_taway_test <-
+  aus_takeaway_turnover %>% 
+  filter_index('1995' ~ .)
+```
+
+a. **Fit all the appropriate benchmark methods to the training set and forecast the periods covered by the test set.**
+
+```{r}
+aus_taway_models <-
+  aus_taway_train %>% 
+  model(
+    mean = MEAN(Turnover),
+    naive = NAIVE(Turnover),
+    snaive = SNAIVE(Turnover),
+    drift = RW(Turnover ~ drift())
+  )
+
+aus_taway_forecast <-
+  aus_taway_models %>% 
+  forecast(aus_taway_test)
+```
+
+b. **Compute the accuracy of your forecasts. Which method does best?**
+
+```{r}
+aus_taway_forecast %>% 
+  accuracy(aus_taway_test) %>% 
+  arrange(RMSE) %>% 
+  group_by(State) %>%
+  slice(1)
+```
+
+The drift appears to have performed the best on most all states except for the Northern territory.
+
+c. **Do the residuals from the best method resemble white noise?**
+
+```{r}
+aus_taway_models %>% 
+  select(drift) %>% 
+  slice(1) %>% 
+  gg_tsresiduals()
+
+
+aus_taway_models %>% 
+  select(drift) %>% 
+  slice(7) %>% 
+  gg_tsresiduals()
+```
+
+The residuals don't appear as white noise, there is still some 6 month seasonality that hasn't been captured by the model.
