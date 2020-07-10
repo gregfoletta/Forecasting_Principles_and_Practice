@@ -32,7 +32,7 @@ The `feasts` package includes functions for computing features and statistics fr
 
 We've seen some: autocorrelations, as well as Guerrero estimate of the Box-Cox transformation parameter.
 
-## Simple Statistics
+# Simple Statistics
 
 Any numerical summary computed from a time series is a feature. This could be mean, minimum, maximum, etc.
 

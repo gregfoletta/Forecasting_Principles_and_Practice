@@ -1,0 +1,129 @@
+---
+title: "Chapter 6 - Judgemental Forecasts"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE, include = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+library(feasts)
+```
+
+Forecasting using judgement is commonn, and may be the only option if there is a lack of historical data.
+
+There are also situations where data are incomplete, or there is a delay in their acquisition. An exampleis central banks forecasting the current level of economic activity. This is known as *nowcasting*.
+
+There are three general settings:
+
+- No available data.
+- Data available and forecasts generated, which are then adjusted using judgement.
+- Data available, then statistical and judgemental forecasts are generated independently and combined.
+
+# Limitations
+
+Judgemental forecasts are subjective, and therefore are not free of bias or limitations. Recent events may have a larger affect on cognition, and more momentous events from the past may be deemed less important.
+
+Judgement can be clouded by political agendas - 'beware the enthusiasm of marketing and sales'.
+
+Another property is *anchoring*, where forecasts tend to converge or be close to an initial familiar reference point - e.g. the last observed value.
+
+# Key Principles
+
+A systemic and structured approach helps to reduce the adverse effects and limitations of judgemental forecasting.
+
+## Clear and Concise
+
+Set teh forecasting task clearly and concisely. All definitions should be clear and comprehensive, avoiding ambiguous and vague expressions.
+
+## Systemic Approach
+
+Use a checklist of categories of information which are relevant to the forecasting task. Identify what information is important and how is it weighted. What factors should be accounted for, and how should they be accounted?
+
+Put together decision rules that will lead to the best possible systematic approach.
+
+## Document and Justify
+
+Formalise and document the decision rules and assumptions implemented in your systematic approach.
+
+## Systematically Evaluate Forecasts
+
+Keep records of forecasts and use them to obtain feedback when the corresponding data becomes available. 
+
+## Segregate Forecasters and Users
+
+Forecast accuracy can be impeded if the task is carried out by users of the forecasts. As an examplem, sales orecasts of a new product may differ significantly from what management **want** the sales to be.
+
+Explain and clarify the process with users so that they have cionfidence in them.
+
+# The Delphi Method
+
+This method was invented in the 1950s by the Rand corporation to address a specific military problem. It relies on the assumption that forecasts from a group are generally more accurate than forecasts from and individual.
+
+The aim is to develop consensus forecasts from a group of experts in an iterative manner. The stages are generally:
+
+1. Assemble a panel of experts
+2. Distribute forecasting tasks/challenges to these experts.
+3. Compile returned initial forecasts.
+4. Provide feedback, with the experts revewing in light of this feedback.
+    - This step may be iterated.
+5. Construct final forecasts by aggregating the experts' forecasts.
+
+## Experts and Anonymity
+
+The suggestion is that between 5 and 20 experts with diverse expertise is required. A key feature is that these experts remain anonymous all the time. This is so they cannot be influenced by political and social forces. They are all given and equal say, and held accontable for their forecasts.
+
+## Setting the Task
+
+In can be useful to conduct a preliminary round of information gathering from the experts before setting the forecasting tasks. 
+
+## Feedback
+
+Feedback to the experts should include:
+
+- Summary statistics of the forecasts.
+- Outlines of qualitative justifications.
+
+Feedback is controlled by the facilitator, who may direct attention to areas where it is most required. E.g. it may be directed to responses that fall outside the interquartile range, and the justification for such forecasts.
+
+## Iteration
+
+The process of submission, feedback and review is repeated until a satisfactory level of consensus is reached. Thi does not men complete convergence, but that the variability of the responses has decreased to a satisfactory level.
+
+Generally two or three rounds is enough.
+
+## Final Forecasts
+
+Final forecasts are generally constructed by giving equal weight to all of the experts' forecasts. The facilitator should keep in mind the possibility of extreme values.
+
+## Limitations and Variations
+
+Applying this method can be time consuming. In a group meeting, forecasts can be reached in hours or minutes, something that is not possible with this method. The panel may lose interest or cohesiveness.
+
+In a group setting, personal interactions can lead to quicker and better clarifications. A variation of the Delphi method is the 'estimate-talk-estimate' method, where experts can interact between iterations, although the forecast submissions can still remain anonymous. The disadvantage is that the loudest person can exert undue influence.
+
+## The Facilitator
+
+The facilitator is of the utmost importance. They are responsible for the design and administraton of the process. They are also responsible for providing feedback and generating the final forecasts.
+
+They need to be experienced to recognise the areas that need more attention, and to direct experts' attention to these.
+

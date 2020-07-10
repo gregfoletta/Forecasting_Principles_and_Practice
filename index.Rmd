@@ -11,20 +11,25 @@ output:
 
 # Chapter 1 - Getting Started
 
-* [Notes](01-getting_started.html)
+* [Notes](01-getting_started.html) - Planning & Goals, Basic Steps, Choosing and Fitting Models.
 
 # Chapter 2 - Time Series Graphics
 
-* [Notes & Exercises](02-time_series_graphics.html)
+* [Notes & Exercises](02-time_series_graphics.html) - `tsibble` objects, Time Plots, Scatterplots, Lag Plots, Autocorrelation.
 
 # Chapter 3 - Time Series Decomposition
 
-* [Notes & Exercises](03-time_series_decomposition.html)
+* [Notes & Exercises](03-time_series_decomposition.html) - Transformations and Adjustments, Time Series Components, Moving Averages, Classical Decomposition; X11, SEATS and STL Decomposition
 
 # Chapter 4 - Time Series Features
 
-* [Notes & Exercises](04-time_series_features.html)
+* [Notes & Exercises](04-time_series_features.html) - Simple Features, ACF Features, STL Features.
 
 # Chapter 5 - The Forecaster's Toolbox
 
-* [Notes & Exercises](05-forecasters_toolbox.html)
+* [Notes](05-forecasters_toolbox.html) - Simple Methods, Fitted Values and Residuals, Residual Diagnostics, Forecast Distributions, Forecasting Using Transformations & Decompositions, Evaluating Forecast Accuracy
+* [Exercises](05-exercises.html)
+
+# Chapter 6 - Judgmental Forecasts
+
+* [Notes](06-judgemental_forecasts.html) - Limitations, Principles, Delphi Method, Scenario Forecasting, Judgemental Adjustments.
