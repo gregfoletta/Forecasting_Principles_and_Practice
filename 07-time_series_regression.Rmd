@@ -1,0 +1,289 @@
+---
+title: "Chapter 7 - Time Series Regression Models"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE, include = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+library(feasts)
+```
+
+Basic concept is the forecasting the time series of interest $y$ assuming it has a linear relationship with other time series $x$.
+
+# Simple Linear Regression
+
+Standard model:
+
+$$ y_t = \beta_0 + \beta_1X_t + \epsilon_t $$
+
+```{r}
+us_change %>% 
+    ggplot(aes(x = Quarter)) +
+    geom_line(aes(y = Consumption), colour = 'red') +
+    geom_line(aes(y = Income), colour = 'blue') + 
+    labs(
+        x = 'Year',
+        y = '% Change',
+        title = 'US Personal Income and Consumption'
+    )
+```
+
+We can show a scatter plot and an estimated linear fit:
+
+```{r}
+us_change %>% 
+    ggplot(aes(Income, Consumption)) +
+    geom_point() +
+    geom_smooth(method = 'lm') +
+    labs(
+        x = 'Income (Qtr % Change)',
+        y = 'Consumption (Qtr % Change)',
+        title = 'US Income vs Consumption'
+    )
+```
+
+The fit can be calculated using the TSLM (time series linear model) function:
+
+```{r, comment = ''}
+us_change %>% 
+    model(lm = TSLM(Consumption ~ Income)) %>% 
+    tidy()
+```
+
+The slope cas a coefficient of .27, meaning that for every 1% change in income, consumption goes up by .27%.
+
+The intercept is when $x = 0$, so when there is no change in income, there is an increase in consumptiojn of .54%.
+
+# Multiple Linear Regression
+
+When there are two ro more predictor variables, the model is a **multiple regression**. It is of the form:
+
+$$ y_t = \beta_0 + \beta_1 x_{1,t} + \beta_2 x_{2,t} + \ldots + \beta_p x_{p,t} + \epsilon_t $$
+
+The coefficients measure the effect of each predictor after taking into account the effects of all other predictors - they measure the **marginal effects** of the predictor variables.
+
+Below we look at three predictors that may be able to predict US consumption expenditure:
+
+```{r}
+us_change %>% 
+    pivot_longer(
+        c(Production, Savings, Unemployment), 
+        names_to = 'Measure',
+        values_to = 'Percentage'
+    ) %>% 
+    ggplot() +
+    geom_line(aes(Quarter, Percentage, colour = Measure)) +
+    facet_grid(rows = vars(Measure), scales = 'free') +
+    labs(
+        x = 'Quarter',
+        y = '% Change',
+        title = 'US Personal Fiscal Data',
+        subtitle = 'Consumption, Savings, Unemployment'
+    )
+```
+
+We can look at a scatterplot of the five variables:
+
+```{r}
+us_change %>% 
+    GGally::ggpairs(columns = 2:6, progress = FALSE)
+```
+
+# Linear Model Assumptions
+
+When fitting linear model, the following assumptions are made about the errors ($\epsilon_t$):
+
+- They have a mean zero, otherwise the forecasts witll be biased.
+- The are not correlated.
+- They are unrelated to the predictor variables.
+
+It is also useful that they are normally distributed with a constant variance. This allows us to produce prediction intervals.
+
+# Least Squares Estimation
+
+The least squares principle is a way of choosing the coefficients by minimising the sum or the squared errors. The $\beta_p$ are chosen that minimise:
+
+$$ \sum_{t=1}^T \epsilon_t^2 = \sum_{t=1}^t (y_t - \beta_0 - \beta_1 x_{1,t} - \ldots - \beta_p x_{p,t})^2 $$
+
+The `TSLM()` function fits a linear regression to time series data, similar to `lm()`.
+
+```{r, comment = ''}
+us_consumption_mdl <-
+    us_change %>% 
+    model(
+        lm = TSLM(Consumption ~ Income + Production + Unemployment + Savings)
+    )
+
+us_consumption_mdl %>% 
+    report()
+```
+
+# Fitted Values
+
+Predictions for a data point can be calculated by simply plugging the $x_{p,t}$ values into the formula with the coefficients.
+
+```{r}
+us_consumption_mdl %>% 
+    augment() %>% 
+    rename(Fitted = .fitted) %>% 
+    pivot_longer(c(Consumption, Fitted), names_to = 'Measure', values_to = 'Value') %>% 
+    ggplot() +
+    geom_line(aes(Quarter, Value, colour = Measure)) +
+    labs(
+        x = 'Quarter',
+        y = '% Change',
+        title = 'US Consumption',
+        subtitle = 'Actual versus Model Fitted'
+    )
+```
+
+
+# Goodness-of-Fit
+
+## R-Squared
+
+$R^2$ is the most common way to summarise how well a linear regression model fits the data.
+
+$$ R^2 = \frac{
+    \sum(\hat{y}_t - \bar{y})^2
+}{
+    \sum(y_t - \bar{y})^2
+}$$
+
+It is the proportion of the variation in the forecast accounted for (or explained) by the model.
+
+$R^2$ will never decrease when adding in additional predictors, which can lead to over-fitting.
+
+## Standard Error of the Regression
+
+Another measure is the standard deviation of the residuals, or **residual standard error**.
+
+$$ \hat{\sigma}_e = \sqrt{ \frac{1}{T - p - 1} \sum_{t=1}^T e^2_t } $$
+
+Where $p$ is the number of predictors in the model. We take $p - 1$ away because we have estimated the intercept plus $p$ parameters.
+
+The standard error is related to the size of the average error that the model produces. We compare this to the sample mean of $y$ or the standard deviation of $y$ to gain perspective on the accuracy of the model.
+
+# Evaluating the Regression Model
+
+The residuals are defined as $e_t = y_t - \hat{y}_t$. They also have other useful properties:
+
+$$ \sum_{t=1}^t e_t = 0 \text{ and } \sum_{t=1}^Tx_{p,t} e_t = 0 \text{ for all } p $$
+
+as a result, the mean of the residuals is zero, and the correlation between the residuals and the observations for the predictor variable is also zero.
+
+## ACF Residual Plot
+
+With time series data, it's very unlikely that a value of a variable in the current time period will be the same as the previous period. Thus it's common to find autocorrelation when fitting a regression model to time series data, and one of our assumptions is violated. 
+
+What this means is that there's some information that hasn't been accounted for, and the forecasts aren't as efficient as they should be. The forecasts are still *unbiased*, and not wrong, but the will have a larger prediction interval than they need to.
+
+The `gg_tsresiduals()` gives the three key diagnostic plots needed:
+
+```{r}
+us_consumption_mdl %>% gg_tsresiduals()
+```
+
+We see some chage in variation over time, but otherwise the residual plot looks reasonable. The heteroscedacticity makes the prediction intervals inaccurate. The residuals look "normal-ish", however they are skewed, which will also affect the prediction intervals.
+
+## Residual Predictor Plots
+
+We expect that the residuals should be randomly scattered without showing any systematic patterns. We can check this by plotting them against the predictors.
+
+In the plots below, we don't see any noticible patterns between the residuals and the predictor values.
+
+```{r}
+us_change %>% 
+    left_join(residuals(us_consumption_mdl), by = 'Quarter') %>% 
+    pivot_longer(
+        c(Income, Production, Savings, Unemployment),
+        names_to = 'Economic_Measure',
+        values_to = 'Economic_Value'
+    ) %>% 
+    ggplot() +
+    geom_point(aes(Economic_Value, .resid)) +
+    facet_wrap(vars(Economic_Measure), scales = 'free') +
+    labs(
+        x = 'Economic Measure %',
+        y = 'Model Residuals',
+        title = 'US Consumption',
+        subtitle = 'Linear Model - Predictors versis Residuals'
+    )
+```
+
+## Residual Versus Fitted
+
+A plot of the residuals versus the fitted values should also show no pattern. If there is a pattern, the errors may be heteroscedastic, whereby the variance of the residuals is not constant.
+
+From the plot below we see that the errors appear to be random, suggesting that the errors are homoscedastic.
+
+```{r}
+us_consumption_mdl %>% 
+    augment() %>% 
+    ggplot() +
+    geom_point(aes(.fitted, .resid)) +
+    labs(
+        x = 'Fitted Consumption',
+        y = 'Residuals',
+        title = 'US Consumption Model',
+        subtitle = 'Linear Model - Fitted versus Residuals'
+    )
+```
+
+## Outliers and Influential Observations
+
+Observation with extreme values are **outliers**, and observations that have a large influence on the coefficients of a regression  model are called **influential observatons** and these impart **leverage**. Usually, but not necessarily, outliers impart leverage.
+
+There is no rigid mathematical definition of an outlier - it's ultimately subjective and depends on the context of the model. Observations can be flagged based on interquartile ranges - e.g. if $Q_1$ and $Q_3$ are the lower and upper quartiles, an outlier could be anything outside the range $[Q_1 - k(Q_4 - Q_1), Q_3 + k(Q_3 - Q_1)]$ for some non-negative constant $k$. John Tukey proposed $k = 1.5$.
+
+Leverage is usually noted as $h_i$ for the $i$th observation, which can be found in the [hat matrixhttps://stats.stackexchange.com/questions/208242/hat-matrix-and-leverages-in-classical-multiple-regression) $\bf{H}_{ii}$.
+
+## Spurious Regression
+
+Generally, time series data are 'non-stationary', which means that the values of the series do not fluctuate around a constant mean or with constant variance. 
+
+For example, let's regress production of cement with productio of electricity:
+
+```{r}
+aus_production %>% 
+    ggplot(aes(Electricity, Cement)) +
+    geom_point() +
+    geom_smooth(method = 'lm', formula = 'y ~ x') +
+    labs(
+        title = 'Spurious Regression',
+        subtitle = 'Electricity vs Cement Production'
+    )
+```
+
+```{r, comment = ''}
+aus_production %>% 
+    model(
+        lm = TSLM(Cement ~ Electricity)
+    ) %>% 
+    report()
+```
+
+We see that we get an $R^2$ of .89, indicating that 89% of the variation in the Cement response can be accounted for by the Electricity predictor. Of course the production of Cement has nothing to do with the production of Electricity, a classic case of 'correlation not causation'. What we have is a confounding variable or varibales, likely gross domestic product or population, which has a direct impact on both of these variables.
+
+# Useful Predictors

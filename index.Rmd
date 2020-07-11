@@ -33,3 +33,7 @@ output:
 # Chapter 6 - Judgmental Forecasts
 
 * [Notes](06-judgemental_forecasts.html) - Limitations, Principles, Delphi Method, Scenario Forecasting, Judgemental Adjustments.
+
+# Chapter 7 - Time Series Regression Models 
+
+* [Notes](07-time_series_regression.html) - Linear, Least Squares, Selecting Predictors, Forecasting with Regression, Martix Formulation, Non-linear Regression.
