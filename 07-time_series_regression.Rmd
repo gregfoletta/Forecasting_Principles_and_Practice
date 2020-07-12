@@ -287,3 +287,192 @@ aus_production %>%
 We see that we get an $R^2$ of .89, indicating that 89% of the variation in the Cement response can be accounted for by the Electricity predictor. Of course the production of Cement has nothing to do with the production of Electricity, a classic case of 'correlation not causation'. What we have is a confounding variable or varibales, likely gross domestic product or population, which has a direct impact on both of these variables.
 
 # Useful Predictors
+
+## Trend
+
+It's common for time series data to be trending. A linear trend can be modelled by using $x_{1,t} = t$ as a predictor, where $t = 1,\ldots,T$. A trend variable can be specified in the $TSLM()$ function using the $trend()$ special.
+
+## Dummy Variables
+
+Dummy variables are used within a linear regression to model caegorical variables. Can also be used for an outlier. If there are more than two categories, multiple variables can be used. You will use one less variables that there are categories, as the intercept will capture that variables when all the variables are set to zero.
+
+The `TSLM()` will automatically handle this if the `season()` special is inlcuded.
+
+Below we fit a linear model to Australian electricity demand.
+
+```{r}
+aus_electricity_lms <-
+    aus_production %>%
+    filter_index('1992' ~ .) %>% 
+    model(
+        `Trend LM` = TSLM(Electricity ~ trend()),
+        `Trend + Season LM` = TSLM(Electricity ~ trend() + season())
+    )
+
+aus_electricity_lms %>% 
+    select(`Trend + Season LM`) %>% 
+    report()
+```
+
+So we can see that, for every quarter, ~280 Gigawatt hours more electricity is produced. On average the second quarter has ~990 Gwh more elctricity produced, and quarter 3 has 2506Gwh more electricity - which lines up with the majority of the summer season.
+
+```{r}
+aus_electricity_lms %>% 
+    augment() %>% 
+    ggplot(aes(x = Quarter)) +
+    geom_line(aes(y = Electricity, colour = 'Real Values')) +
+    geom_line(aes(y = .fitted, colour = .model)) +
+    labs(
+        colour = 'Data Source',
+        title = 'Australian Electricity Demand',
+        subtitle = 'Linear Regressions',
+        x = 'Year',
+        y = 'Gigawatt Hours Produced'
+    )
+```
+
+```{r}
+aus_electricity_lms %>%
+    select(`Trend + Season LM`) %>% 
+    augment() %>% 
+    ggplot() +
+    geom_point(aes(Electricity, .fitted, colour = as.factor(quarter(Quarter)))) +
+    geom_abline(slope = 1, intercept = 0) +
+    scale_colour_brewer(palette="Dark2") +
+    labs(
+        title = 'Australian Electricity Demand',
+        subtitle = 'Linear Regressions - Response vs. Fitted',
+        x = 'Electricity Demand (GWh)',
+        y = 'Linear Regression Fitted Values',
+        colour = 'Quarter'
+    )
+```
+
+## Intervention Variables
+
+It can be necessary to omdel interventions that may affect the response variable - e.g. competitor activity, advertising expenditure, industrial action, etc.
+
+When the action only lasts for one quarter, a 'spkike' variable is used which takes the value of one in the period of the action.
+
+If the action changes the the values suddenly and permanently, a 'step' variable is used, taking the value 0 before the action and 1 after.
+
+Piecewise linear models can be used where the trend change at an inflection point.
+
+## Trading Days
+
+The number of trading days in a month can vary substantially, and can be added in as a predictor.
+
+## Distributed Lags
+
+It can be useful to include advertising expenditure, however as this can last beyond the actual campaign, lagged values of the expenditure need to be included:
+
+$$
+x_1 = \text{ advertising for previous month.} \\
+x_2 = \text{ advertising for previous two months.} \\
+\vdots \\
+x_m = \text{ advertising for previous } m { months.}
+$$
+
+The coefficients should decrease as the lag increases.
+
+## Easter
+
+Easter differs from most holidays because it is not held on the same date wach year, and its effects can last several days. With monthly data, if easter falls in March then the dummy variable takes value 1 in March. If Easter is over two months, the dummy variable is split proportionally across the months.
+
+## Fourier Series
+
+An alternative to dummy variables, especially for long seasonal periods, is to use Fourier terms. With a Fourier series, a set of sine and cosine functions can approximate any periodic function.
+
+If $m$ is the seasonal period, then the first few Fourier terms are:
+
+$$
+x_{1,t} = sin\bigg(\frac{2 \pi t}{m}\bigg), x_{2,t} = con\bigg(\frac{2 \pi t}{m}\bigg) \\
+x_{3,t} = sin\bigg(\frac{4 \pi t}{m}\bigg), x_{4,t} = cos\bigg(\frac{4 \pi t}{m}\bigg) \\
+x_{5,t} = sin\bigg(\frac{6 \pi t}{m}\bigg), x_{6,t} = cos\bigg(\frac{6 \pi t}{m}\bigg) \\
+$$
+
+If there is monthly seasonality, and we use the first 11 of these predictor variables, it will be the same forecasts as using 11 dummy variables. The benefit is that fewer predictors are required than with dummy variables. This is useful for weekly data where $m \approx 52$.
+
+These terms can be produced using the `fourier()` special. The $K$ argument specifies how many pairs of $sin()$ and $cos()$ pairs to include. The maximum allowed is $K = m/2$.
+
+If only the first two are used, the seasonal pattern is a simple sine wave. A regression with Fourier terms is often called a **harmonic regression**.
+
+```{r}
+aus_production %>% 
+    model(TSLM(Beer ~ trend() + fourier(K = 2))) %>% 
+    augment() %>% 
+    ggplot() +
+    geom_line(aes(Quarter, Beer, colour = 'Beer')) +
+    geom_line(aes(Quarter, .fitted, colour = 'Fitted')) +
+    labs(
+        colour = 'Data Source',
+        title = 'Australian Beer Production',
+        subtitle = 'Linear Regression with Trend & Fourier Terms',
+        x = 'Year',
+        y = 'Megalitres'
+    )
+        
+```
+
+# Selecting Predictors
+
+Common approaches that are *not recommended* are:
+
+- Plotting the response against a particular predictor and visually determining if there is a relationship.
+- Perform multiple linear regression on all predictors and disregard based on p-value.
+    - Statistical significance does not always indicate predictive value.
+    - P-values are misleading with correlated predictors.
+    
+Instead, the following measures can be used:
+
+## Adjusted R$^2$
+
+- Not a good measure of predictive ability.
+- Does not allow for degrees of freedom: adding any variable will increase its value.
+- Minimusing sum of squared errors (SSE) is equivalent.
+
+An alternative is adjusted R^2, which is equivalent to minimising the standard error, and doesn't increase with each added predictor:
+
+$$ \bar{R}^2 = 1 - (1 - R^2) \frac{T - 1}{T - k - 1} $$
+Where $T$ is the number of observations and $k$ is the number of predictors.
+
+## Cross-Validation
+
+- Can use classical leave-one-out cross validation (LOOCV):
+
+1. Remove observation $t$.
+1. Fit the model using the remaining data.
+1. Predict the value of $t$ and compute the error $e_t^* = y_t - \hat{y}_t$.
+1. Repeat step for $t, \ldots, T$.
+1. Compute the MSE from $e_1^*, \ldots, e_T^*$.
+
+
+## Akaike's Information Criterion
+
+$$ AIC = T log\bigg(\frac{SSE}{T}\bigg) + 2(k + 2) $$
+
+The $k + 2$ part of the equation occurs because there are that many parameters in the model: the $k$ predictors, the intercept, and the variance of the residuals.
+
+The model with the minimum AIC is often the best model for forecasting.
+
+## Corrected AIC
+
+For small values of $T$, the AIC tends to select too many predictors. A bias-corrected version  has been developed:
+
+$$ AIC_c = AIC + \frac{ 2(k+2)(k+3)}{T - k - 3} $$
+
+## Schwarz's Bayesian Information Criterion
+
+Usually abbreviated to BIC, SBIC or SC, this value should be minimised. BIC penalises the number of parameters more heavily than AIC. For large values of $T$, it is similar to leave-$v$-out cross validation, where $v = T(1 - \frac{1}{log(T) - 1})$
+
+$$ BIC = T log\bigg(\frac{SSE}{T}\bigg) + (k+2)log(T) $$
+
+## Which One?
+
+- $\bar{R}^2$ is widely used, but has a tendency to select too many predictors.
+- BIC is liked because if there is a ture underlying model, BIC will select it given enough data.
+    - However there is rarely a true underlying model.
+    - Selecting that model may not necessarily give the best forecasts.
+    
+Hyndman and Athanasopoulos recommend one of $AIC_c$, $AIC$ or $CV$ be used.
+
