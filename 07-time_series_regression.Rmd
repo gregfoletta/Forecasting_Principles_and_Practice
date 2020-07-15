@@ -476,3 +476,293 @@ $$ BIC = T log\bigg(\frac{SSE}{T}\bigg) + (k+2)log(T) $$
     
 Hyndman and Athanasopoulos recommend one of $AIC_c$, $AIC$ or $CV$ be used.
 
+## Best Subset
+
+Where possible, all regression models should be fitted and a model selected on the above criteria.
+
+## Stepwise
+
+If there are a large number of predictors, fitting every possible combination of them is not possible - e.g. 40 predictos is $2^40$ models!
+
+*Backwards stepwise* regression is a good approach:
+
+1. Start with all predictors.
+1. Remove one predictor at a time and model.
+1. Keep the model if it improves the measure of predictive accuracy.
+1. Iterate until no further improvement.
+
+If the number of predictors is large, this won't work, and *forward stepwise* regression can be used.
+
+## Inference
+
+Beware that any procedire involving selecting predictors first will invalidate the assumptions behind p-values.
+
+# Forecasting with Regression
+
+There are different types of forecasts that can be produced:
+
+- **Ex-ante** - made using only the information available in advance. These are genuine forecasts.
+- **Ex-post** - made using later information on the predictors. E.g. ex-post consumption forecast may use the actual observations of the predictors once these have been observed. These are not genuine forecassts, but are useful for studying the behaviour of forecasting models.
+
+Ex-post models can assume knowledge of the predictor variables, but should not assume knowledge of the response.
+
+Comparing ex-ante and ex-post forecasts can help to separate out the sources of forecast uncertainty. This will show whether forecast errors are due to poor forecasts of the predictor, or due to a poor forecasting model.
+
+Normally we cannot use actual future values of the predictors as they are not known in advance. However special predictors can be used as they are either based on calendar variables or deterministic functions of time. In this case there is not difference between ex-ante and ex-post forecasts.
+
+```{r}
+recent_production <-
+    aus_production %>% 
+    filter_index('1992' ~ .)
+
+recent_production %>%
+    model(TSLM(Beer ~ trend() + season())) %>% 
+    forecast() %>% 
+    autoplot(recent_production)
+```
+
+# Scenario Based Forecasting
+
+With scenario based forecasting, the forecaster assumes possible scenarios for the predictor variables that of interest. They may look at an economic forecast with different changes in the employment rate.
+
+# Building a Predictive Regression Model
+
+A challenge with regression models is that to generate ex-ante forecasts, the model requires the future values of each predictor. It many cases generating forecasts for the predictor variables can be the most challenging part!
+
+An alternative is to use lagged values of the predictors. The predictor set is formed by values of that are observed $h$ time periods prior to observing $y$. When the estimates model is projected into the future - beyond sample $T$, all predictor values are available.
+
+# Prediction Intervals
+
+For a simple univariate regression, assuming the errors are normally distributed, an approximate 95% prediction interval is given by:
+
+$$ \hat{y} \pm 1.96 \hat{\sigma}_e \sqrt{ 1 + \frac{1}{T} + \frac{(x - \bar{x})^2}{(T-1)s^2_x}} $$
+
+Where $s$ is the standard deviation of the observed values and $\hat{\sigma}_e$ s the standard error of the regression.
+
+# Matrix Formulation
+
+Our regression model is:
+
+$$ y_t = \beta_0 + \beta_1 x_{1,t} + \ldots + \beta_p x_{p,t} + \epsilon_t $$
+
+We can write this in matrix form where $\boldsymbol{y} = (y_1, \ldots, y_n)^T$, $\boldsymbol{\epsilon} = (\epsilon_1, \ldots, \epsilon_n)^T$, $\boldsymbol{\beta} = (\beta_0, \ldots, \beta_n)^T$, and 
+
+$$
+\boldsymbol{X} = \left[
+    \begin{matrix}
+      1 &  x_{1,1} & x_{2,1} & \dots & x_{n,1}\\
+      1 & x_{1,2} & x_{2,2} & \dots & x_{n,2}\\
+      \vdots& \vdots& \vdots&& \vdots\\
+      1 & x_{1,T}& x_{2,T}& \dots & x_{m,T}
+    \end{matrix}\right]
+$$
+
+Giving us:
+
+$$ \boldsymbol{y} = \boldsymbol{X}\boldsymbol{\beta} + \boldsymbol{\epsilon} $$
+
+## Least Squares Estimation
+
+Least squares estimation is performed by minimising the epression:
+
+$$ \epsilon^T\epsilon = (y - X\beta)^T(y-X\beta) $$
+
+This is minimised when $\beta$ takes on the expression:
+
+$$ \hat{\beta} = (X^TX)^{-1} X^Ty $$
+
+```{r}
+set.seed(1)
+y <- seq(10, 100, by = 20)
+data <- tibble(
+    x0 = rep(1, 5),
+    x1 = 1:5 + rnorm(5),
+    x2 = seq(11, 20, 2) + rnorm(5)
+) 
+
+X <-
+    data %>% 
+    as.matrix()
+
+# Normal equation
+beta <- solve(t(X) %*% X) %*% t(X) %*% y
+print(beta)
+
+# Regression
+data %>% 
+    add_column(y) %>% 
+    lm(y ~ x1 + x2, data = .) %>% 
+    coef()
+```
+
+This is known as the **normal equation**.
+
+The variance is estimated using:
+
+$$ \hat{\sigma}^2_e = \frac{1}{T - k -1} (y - X\hat{\beta})^T (y - X\hat{\beta})$$
+
+## Fitted Values and Cross Validation
+
+The normal equation shows that the fitted values can be calcuated using:
+
+$$ \hat{y} - X\beta = X(X^TX)^{-1}X^Ty = Hy $$
+
+The $H$ is known as the 'hat matrix', because it 'puts the had on $y$'.
+
+The diagonal values of $H$ are denoted by $h_1, \ldots, h_n$. The cross-validation statistic can be computed by:
+
+$$ CV = \frac{1}{T} \sum_{n = 1}^N (e_t / (1 - h_t))^2 $$
+
+Where $e_t$ is the $t$th residual. We see that it is not necessary to fit $N$ models to compute the CV statistic.
+
+## Forecasts
+
+Let $x^*$ be a row vector containing the values of the predictors. The forecast is:
+
+$$ \hat{y} = x^*\hat{\beta} = x^* (X^TX)^{-1} X^T Y$$
+
+# Nonlinear Regression
+
+The simplest way of modelling a nonlinear relationship is to transform the response and/or one or more of the predictors before estimating a regression model. This provides a non-linear form, however it is still linear in the parameters ($\beta$).
+
+You could have a **log-log** model $log(y) = \beta_0 + \beta_1 log(x) + \epsilon$, in which $\beta_1 is the average percentage change in $y$ resulting from a 1% change in $x$.
+
+The general model is:
+
+$$ y = f(x) + \epsilon $$
+There $f$ is a nonlinear function. For standard linear regression, $f(x) = \beta_0 + \beta_1 x$.
+
+A simple specification is to make a piecewise linear - this introduces points where the slope can change:
+
+$$
+x_{2,t} = (x - c)_{+} = \Bigg\{ \begin{array}{ll}
+     0 & x < c \\ 
+    (x - c) & x \ge c
+\end{array}
+$$
+
+$(x - c)_{+}$ means the value of $x-c$ if it is positive, and zero otherwise. The slopes inflection point is therefore at point $c$.
+
+Piecewise linear relationships are a special case of regression splines. In general:
+
+$$
+x_1 = x \\
+x_2 = (x - c_1)_{+} \\
+\ldots \\
+x_k = (x - c_k)_{+}
+$$
+
+# Forecasting with a Nonlinear Trend
+
+To fit a non-linear trend, you may use quadratic or other higher order polynomials:
+
+$$ x_{1,t} = t, \text{ } x_{2,t} = t^2, \text{ }  \ldots $$
+
+However these are not recommended to be used in forecasting. When extrapoloated, the resulting forecasts are often unrealistic.
+
+Piecewise specification is a better approach:
+
+$$
+x_{1,t} = t \\
+
+x_{2,t} = (t - \tau)_{+} = \Bigg\{ \begin{array}{ll}
+0 & t < \tau \\
+(t - \tau) & t \ge \tau
+
+\end{array}
+$$
+
+
+In this model, if the coefficients of $x_{1,t}$ and $x_{2,t}$ are $\beta_1$ and $\beta_2$, then $\beta_1$ is the slope before time $\tau$, and the slope of the line after $\tau$ is given by $\beta_1 + \beta_2$.
+
+## Example
+
+```{r}
+boston_men_mdl <-
+    boston_marathon %>% 
+    filter(Event == "Men's open division") %>% 
+    mutate(Seconds = as.numeric(Time)) %>% 
+    model(lm = TSLM(Seconds ~ trend()))
+
+boston_men_mdl %>% 
+    augment() %>% 
+    ggplot() +
+    geom_line(aes(Year, Seconds)) +
+    geom_line(aes(Year, .fitted), colour = 'Blue') +
+    labs(
+        title = 'Boston Marathon Times - Men',
+        subtitle = 'Linear Fit',
+        x = 'Year',
+        y = 'Seconds'
+    )
+
+boston_men_mdl %>% 
+    augment() %>% 
+    autoplot(.resid) +
+    labs(
+        title = 'Boston Marathon - Men',
+        subtitle = 'Linear Regression Residuals',
+        x = 'Year',
+        y = 'Residual (Seconds)'
+    )
+    
+```
+
+We see that the plot shows an obvious non-linear pattern, with some heteroscedacticity as well.
+
+Instead we will fit an exponential trend (equivalent to a log-linear) and a piecewise linear. A caution: subjective identification of the knot points can lead to overfitting.
+
+```{r}
+boston_marathon %>% 
+    filter(Event == "Men's open division") %>% 
+    mutate(Seconds = as.numeric(Time)) %>% 
+    model(
+        exp = TSLM(log(Seconds) ~ trend()),
+        pw = TSLM(Seconds ~ trend(knots = c(1940, 1980)))
+    ) %>% 
+    augment() %>% 
+    ggplot() +
+    geom_line(aes(Year, Seconds)) +
+    geom_line(aes(Year, .fitted, colour = .model), size = 1.5) +
+    labs(
+        title = 'Botson Marathon - Men',
+        subtitle = 'Exponential and Piecewise Linear Models',
+        x = 'Year',
+        y = 'Seconds'
+    )
+```
+
+# Correlation, Causation, and Forecasting
+
+**Correlation is not causation**! A variable $x$ may be useful for forecasting $y$, but that does not mean it is causing it. $y$ may be causing $x$, or the relationship may be more complicated.
+
+A confounding variable influences the response and at least one predictor.
+
+Correlations are useful for forecasting, even when there is no causal relationship, or when the causality runs in the other direction, or when there is confounding.
+
+However, models will be better if the causal mechanism can be determined.
+
+## Forecasting with Correlated Predictors
+
+When two or more predictors are correlated, it's challenging to separate out their individual effects. It's not really a problem for forecasting, as the forecasts can still be determined without the need to separate the effects. It does become a problem with scenario forecasting as the scenarios should take into account the relationships between predictors.
+
+## Multicollinearity and Forecasting
+
+**Multicollinearity** occurs when similar information is provided by two or more of the predictor variables in a multiple regression. It can occur when the two predictors are highly correlated, or when a linear combination of predictors is highly correlated with another linear combination of predictors.
+
+An example is the dummy variable trap. Consider having quarterly data dummy variables or $d_1, d_2, d_3 and d_4$. $d_4 = 1 - d_1 - d_2 - d_3$, so there is a perfect relationship between $d_4$ and $d_1 + d_2 + d_3$.
+
+If there is perfect correlation, it is not possible to estimate the regression model. If there is high correlation, the estimation of the regression coefficients is very difficult.
+
+```{r}
+tibble(
+    x1 = 1:10,
+    x2 = 2 * x1 + rnorm(10),
+    x3 = 5 * x2 + rnorm(10),
+    y = 1:10
+) %>% 
+    lm(y ~ x1 + x2 + x3, data = .) %>% 
+    summary()
+```
+
+
