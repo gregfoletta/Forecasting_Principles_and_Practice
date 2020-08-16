@@ -37,4 +37,9 @@ output:
 # Chapter 7 - Time Series Regression Models 
 
 * [Notes](07-time_series_regression.html) - Linear, Least Squares, Selecting Predictors, Forecasting with Regression, Martix Formulation, Non-linear Regression.
-* [Exercises](06-exercises.html)
+* [Exercises](07-exercises.html)
+
+# Chapter 8 - Exponential Smoothing
+
+* [Notes](08-exponential_smoothing.html) - Simple exponential smoothing, Holt's Method, Holt-Winters Seasonal Method.
+

@@ -1,0 +1,170 @@
+---
+title: "Chapter 6 - Time Series Regression Models - Exercises"
+author: "Greg Foletta"
+date: "16/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+
+library(tidyverse)
+library(fpp3)
+library(tsibble)
+```
+
+1) **Half-hourly electricity demand for Victoria, Australia is contained in `vic_elec`. Extract the January 2014 electricity demand, and aggregate this data to daily with daily total demands and maximum temperatures.**
+
+```{r}
+jan_vic_elec <-
+    vic_elec %>% 
+    filter(yearmonth(Time) == yearmonth('2014 Jan')) %>% 
+    index_by(Day = as_date(Time)) %>% 
+    summarise(
+        Demand = sum(Demand),
+        Temperature = sum(Temperature)
+    )
+```
+
+
+a. **Plot the data and find the regression model for Demand with temperature as an explanatory variable. Why is there a positive relationship?**
+
+```{r}
+jan_vic_elec %>%
+    pivot_longer(c(Demand, Temperature), names_to = 'Measure', values_to = 'Value') %>% 
+    ggplot() +
+    geom_line(aes(Day, Value)) +
+    facet_grid(rows = vars(Measure), scales = 'free') +
+    labs(
+        x = 'Date',
+        y = 'Temperature (Celcius) & Demand (GWh)',
+        title = 'Victorian Electricity Demand & Temperature',
+        subtitle = 'January 2014'
+    )
+
+jan_vic_elec %>% 
+    ggplot(aes(Temperature, Demand)) +
+    geom_point() +
+    geom_smooth(method = 'lm', formula = 'y~x')
+```
+
+There is a positive relationship that is likely due to airconditioner use driving up demand as the temperature goes up.
+
+b. **Produce a residual plot. Is the model adequate? Are there any outliers or influential observations?**
+
+```{r}
+jan_elec_mdl <-
+    jan_vic_elec %>% 
+    model(lm = TSLM(Demand ~ Temperature))
+
+jan_elec_mdl %>% 
+    augment() %>% 
+    ggplot() +
+    geom_point(aes(Demand, .resid)) +
+    labs(
+        title = 'Victorian Electricity Demand - Jan 2014',
+        subtitle = 'Linear Model Residuals',
+        x = 'Demand (GWh)',
+        y = 'Model Residuals'
+    )
+```
+
+The residuals are reasonably spread on each side of 0, with no clear patterns discernable. This indicates the linear model is reasonable. There may be some heteroscedacticity as demand increases, however there are also less data points.
+
+We can use a boxplot to determine if there are any outliers, and we can see some temperature outliers.
+
+```{r}
+jan_vic_elec %>% 
+    pivot_longer(c(Demand, Temperature)) %>% 
+    ggplot() +
+    geom_boxplot(aes(name, value, fill = name)) +
+    facet_grid(rows = vars(name), scales = 'free') +
+    labs(
+        x = 'Measurement',
+        y = 'Value',
+        title = 'Victorian Electricity Demand - January 2014',
+        subtitle = 'Demand and Temperature Boxplot'
+    )
+```
+
+
+c. **Use the model to forecast the electricity demand that you would expect for the next day if the maximum temperature was 15∘C and compare it with the forecast if the with maximum temperature was 35∘C. Do you believe these forecasts?**
+
+```{r}
+jan_elec_mdl %>% 
+    forecast(
+        new_data(jan_vic_elec, 1) %>% mutate(Temperature = 15)
+    ) %>% 
+    autoplot(jan_vic_elec)
+
+jan_elec_mdl %>% 
+    forecast(
+        new_data(jan_vic_elec, 1) %>% mutate(Temperature = 35)
+    ) %>%  
+    autoplot(jan_vic_elec) 
+```
+
+The forecasts do not appear to be beleiveable. The projected demand is well outside of what appears to be a standard January demand.
+
+d. **Give prediction intervals for your forecasts.**
+
+```{r}
+jan_elec_mdl %>% 
+    forecast(
+        new_data(jan_vic_elec, 1) %>% mutate(Temperature = 15)
+    ) %>% 
+    hilo(level = 95) %>% 
+    pull(`95%`)
+```
+
+
+e. **Plot Demand vs Temperature for all of the available data in vic_elec aggregated to daily total demand and maximum temperature. What does this say about your model?**
+
+    Data set olympic_running contains the winning times (in seconds) in each Olympic Games sprint, middle-distance and long-distance track events from 1896 to 2016.
+        Plot the winning time against the year. Describe the main features of the plot.
+        Fit a regression line to the data. Obviously the winning times have been decreasing, but at what average rate per year?
+        Plot the residuals against the year. What does this indicate about the suitability of the fitted line?
+        Predict the winning time for each race in the 2020 Olympics. Give a prediction interval for your forecasts. What assumptions have you made in these calculations?
+
+    An elasticity coefficient is the ratio of the percentage change in the forecast variable (y
+
+) to the percentage change in the predictor variable (x). Mathematically, the elasticity is defined as (dy/dx)×(x/y). Consider the log-log model, logy=β0+β1logx+ε. Express y as a function of x and show that the coefficient β1
+
+is the elasticity coefficient.
+
+The data set fma::fancy concerns the monthly sales figures of a shop which opened in January 1987 and sells gifts, souvenirs, and novelties. The shop is situated on the wharf at a beach resort town in Queensland, Australia. The sales volume varies with the seasonal population of tourists. There is a large influx of visitors to the town at Christmas and for the local surfing festival, held every March since 1988. Over time, the shop has expanded its premises, range of products, and staff.
+
+    Produce a time plot of the data and describe the patterns in the graph. Identify any unusual or unexpected fluctuations in the time series.
+    Explain why it is necessary to take logarithms of these data before fitting a model.
+    Use R to fit a regression model to the logarithms of these sales data with a linear trend, seasonal dummies and a “surfing festival” dummy variable.
+    Plot the residuals against time and against the fitted values. Do these plots reveal any problems with the model?
+    Do boxplots of the residuals for each month. Does this reveal any problems with the model?
+    What do the values of the coefficients tell you about each variable?
+    What does the Ljung-Box test tell you about your model?
+    Regardless of your answers to the above questions, use your regression model to predict the monthly sales for 1994, 1995, and 1996. Produce prediction intervals for each of your forecasts.
+    Transform your predictions and intervals to obtain predictions and intervals for the raw data.
+    How could you improve these predictions by modifying the model?
+
+The us_gasoline series consists of weekly data for supplies of US finished motor gasoline product, from 2 February 1991 to 20 January 2017. The units are in “million barrels per day”. Consider only the data to the end of 2004.
+
+    Fit a harmonic regression with trend to the data. Experiment with changing the number Fourier terms. Plot the observed gasoline and fitted values and comment on what you see.
+    Select the appropriate number of Fourier terms to include by minimising the AICc or CV value.
+    Plot the residuals of the final model using the gg_tsresiduals() function and comment on these. Use a Ljung-Box test to check for residual autocorrelation.
+    Generate forecasts for the next year of data and plot these along with the actual data for 2005. Comment on the forecasts.
+
+Data set fma::huron gives the water level of Lake Huron in feet from 1875 to 1972.
+
+    Plot the data and comment on its features.
+    Fit a linear regression and compare this to a piecewise linear trend model with a knot at 1915.
+    Generate forecasts from these two models for the period up to 1980 and comment on these.
+
+(For advanced readers following on from Section 7.7).
+
+Using matrix notation it was shown that if y=Xβ+ε
+, where e has mean 0 and variance matrix σ2I, the estimated coefficients are given by ^β=(X′X)−1X′y and a forecast is given by ^y=x∗^β=x∗(X′X)−1X′y where x∗ is a row vector containing the values of the regressors for the forecast (in the same format as X), and the forecast variance is given by var(^y)=σ2[1+x∗(X′X)−1(x∗)′].
+
+Consider the simple time trend model where yt=β0+β1t
+. Using the following results, 
