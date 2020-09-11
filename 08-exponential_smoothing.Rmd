@@ -354,3 +354,194 @@ au_holidays %>%
   )
 ```
 
+# Taxonomy
+
+With the different combinations of trend and seasonal components, there are nine exponential smoothing methods available. If we define (trend, seasonality), here are the named versions:
+
+- $(N,N)$ - simple exponential smoothing.
+- $(A,N)$ - Holt's linear method.
+- $(A_d,N)$ - Additive damped trend method.
+- $(A,A)$ - Additive Holt-Winters' method.
+- $(A,M)$ - Multiplicative Holt-Winters' method.
+- $(A_d,M)$ - Holt-Winters' damped method.
+
+# Innovations State Space Models
+
+The exponential smoothing methods we've looked at so far generate the same point forecasts, but can also generate prediction (or forecast) intervals.
+
+A statistical model is a stochastic (or random) data generating process that can prodice an entire forecast distribution. Each model consists of a measurement equation that describes the observed data, and some state equations that describe how the unobserved components or states (level, trend, seasonal) change over time.
+
+The are referred to as **state space models**.
+
+For each method there exists two models:
+
+- One with additive errors
+- One with multiplicative errors.
+
+To distinguish between a model with additive and multiplicative errors, a thirds letter as added to the classification. Each state space model is labelled as $ETS(.,.,.,)$. THe possibilities for each component are:
+
+- Error $= {A,M}$
+- Trend $= {N,A,A_d}$
+- Seasonal $= {N,A,M}$
+
+## ETS(A,N,N) - Simple Exponential, Additive Errors
+
+Recall that the forecast equation is $\hat{y}_{t+1|t} = \ell_t$, and the smoothing equation is $\ell_t = \alpha y_t + (1 - \alpha)\ell_{t - 1}$.
+
+If this is re-arranged for the level, we get the 'error correction' form:
+
+$$ 
+\ell_t = \ell_{t-1} + \alpha(y_t - \ell_{t-1}) \\
+ = \ell_{t-1} + \alpha e_t
+$$
+ 
+The training data errors lead to the adjustment of the estimated level throughout the smoothing proccess for $t = 1, \ldots, T$. The closer $\alpha$ is to one, the "rougher" the estimate of the level, as large adjustments take place.s
+
+We can also write $y_t = \ell_{t-1} + e_t$, so that each observation can be represented by the previous level plus an error.
+
+To make this into a *innovations state space model*, all we need to do is specify the probability distribution for $e_t$. For a model with additive errors, we assume that the residuals $e_t$ are **normally distributed** white noise with mean 0 and variance $\sigma^2$
+
+$ e_t = \epsilon_t \sim NID(0, \sigma^2) $
+
+The NID stands for normally and independently distributed. The equatiosn of the model can be written as:
+
+$$
+y_t = \ell_{t-1} + \epsilon_t \\
+\ell_t = \ell_{t-1} + \alpha \epsilon_t
+$$
+
+The first equation is referred to as the *measurement*, and the second equation as the *state* or (transition) equation. These two equations,combined with a statistical distribution of the errors form a fully specified statistical model. Specifically: *an innovations state space model underlying simple exponential smoothing*.
+
+The term "innovations" comes from the fact that all equations use the same random error process $\epsilon_t$. It's also known as a "single source of error" model.
+
+The measurement equation shows the relationship between the observations and the unobserved states. The state equation shows the evolution of the state through time. The influence of the $\alpha$ smoothing parameter is the same as other methods. If $\alpha = 0$, the level of the series does not change over time. If $\alpha = 1$, the model reduces to a random walk.
+
+## ETS(M,N,N) - Simple Exponential, Multiplicative Errors
+
+In a similar way we write models with multiplicative errors by writing the one-step ahead training errors as relative errors:
+
+$$ \epsilon_t = \frac{ y_t - \hat{y}_{t|t-1} }{ \hat{y}_{t|t-1} } $$
+
+Substitutiting $\hat{y}_{t|t-1} = \ell_{t-1}$ gives $y_t = \ell_{t-1} + \ell_{t-1}\epsilon_t$ and $e_t = y_t - \hat{y}_{t|t-1} = \ell_{t-1}\epsilon_t$.
+
+The state space model is then:
+
+$$
+y_t = \ell_{t-1}(1 + \epsilon_t)
+\ell_t = \ell_{t-1}(1 + \alpha \epsilon_t)
+$$
+
+## ETS(A,A,N) - Holt's Linear Method, Additive Errors
+
+For this model we assume the one-step ahead training errors are $\epsilon_t = y_t - \ell_{t-1} - b_{t-1} \sim NID(0, \sigma^2)$.
+
+Substituting this into the error correction equations for Holt's linear method we obtain:
+
+$$
+y_t = \ell_{t-1} + b_{t-1} + \epsilon_t
+\ell_t = \ell_{t-1} + b_{t-1} + \alpha\epsilon_t
+b_t = b_{t-1} + \beta\epsilon_t
+$$
+
+where, for simplicity, $\beta = \alpha\beta^*$.
+
+# Estimation and Model Selection
+
+## Estimating ETS Models
+
+An alternative to estimating the parameters by minimising the sum of squares is to maximise the 'likelihood', where the likelihood is the probability of the data arising from the specified model.
+
+For an additive error model, maximising the likelihood is the same as minimising the sum of squared errors. However different results will be obtained for multiplicative error models.
+
+We will estimate the smoothing parameters $\alpha, \beta, \gamma$ and $\theta$, and the initial states $\ell_0, b_0, s_0, s_{-1}, \ldots, s_{-m+1}$  by maximising the likelihood.
+
+## Model Selection
+
+Information criteria can be used for model selection: AIC, AIC$_{\text{c}}$, and BIC can be used to determine whic of the ETS models is most appropriate for a time series.
+
+Akaike's Information Criterion is defined as:
+
+$$ AIX = -2log(L) + 2k $$
+where $L$ is the likelihood of the model and $k$ is the number of parameters and initial states that have been estimated (including residual variance).
+
+The AIC corrected for small sample bias (AIC$_{\text{c}}$) is:
+
+$$ AIC_c = AIC + \frac{2k(k+1)}{T - k - 1} $$
+and the Bayesian Information Criterion is:
+
+$$ BIC = AIC + k[log(T) - 2] $$
+
+Three of the combinations can cause difficulties:
+
+- ETS(A,N,M)
+- ETS(A,A,M)
+- ETS(A,A$_{\text{d}}$,M)
+
+This is due to division of values potentially close to zero. These are normally not considered when selecting a model.
+
+Models with multiplicative errors are useful when the data are strictly positive, but are not numerically stable when the data contain zeros or negative values.
+
+## Example
+
+The ETS statistical framework is used to forecast Australian holiday tourism over the period 2016 - 2019. The ETS function selects a model by minimising the AIC$_{\text{c}}$:
+
+```{r}
+au_holiday_fit <-
+  au_holidays %>% 
+  model(ETS(Trips))
+
+report(au_holiday_fit)
+```
+
+With `ETS()`, the default estimation is maximum likelihood, not minimised sum of squares.
+
+Here are the states over time:
+
+```{r}
+au_holiday_fit %>% 
+  components() %>% 
+  autoplot()
+```
+
+Here are point forecasts and prediction intervals:
+
+```{r}
+au_holiday_fit %>% 
+  forecast(h = 8) %>% 
+  autoplot(au_holidays)
+```
+
+Because of the multiplicative errors, the residuals are not equivalent to the one-step training errors. The residuals are $\hat{\epsilon}_$, while the one-step training errors are $y_t = \hat{t}_{t|t-1}$. Both are obtained using the `residuals()` function. A type of 'innovation' gives regular residuals.
+
+```{r}
+residuals(au_holiday_fit) %>% 
+  autoplot(.resid)
+residuals(au_holiday_fit, type = 'response') %>% 
+  autoplot(.resid)
+```
+
+
+# Forecasting with ETS Models
+
+Point forecasts are obtained by iterating the equations for $t = T+1, \ldots, T + h$, while setting $\epsilon_t = 0$ for all $t > T$.
+
+For example:
+
+$$
+ETS(M,A,N) = y_{T+1} = (\ell_T + b_T)(1 + \epsilon_{T+1})  \quad \text{therefore:} \\
+\hat{y}_{T+1|T} = \ell_T + b_t
+$$
+
+ETS point forecasts are qual to the medians of the forecast distributions. For models with only additive components, the forecast distributions are normal and the mean equals the median. With multiplicative errors or seasonality, the point forecasts will not be equal to the means of the forecast distributions.
+
+## Prediction Intervals
+
+A big advantage of the models is that prediction intervals can be generated.
+
+For most ETS models, the prediction interval vancan be written as:
+
+$$ \hat{y}_{T+h|T} \pm c \sigma_h $$
+
+where $c$ depends on the coverage probability (i.e. 1.96 for .95), and \sigma^2 is the forecast variance. Forecast variance formulas can be complicated.
+
+Fore a few ETS models, there are no known formulas for prediction intervals. In these cases the `forecast()` functionuses simulated future sample paths and computes prediction intervals from the percentiles of these simulated future paths.

@@ -41,5 +41,6 @@ output:
 
 # Chapter 8 - Exponential Smoothing
 
-* [Notes](08-exponential_smoothing.html) - Simple exponential smoothing, Holt's Method, Holt-Winters Seasonal Method.
+* [Notes](08-exponential_smoothing.html) - Simple exponential smoothing, Holt's Method, Holt-Winters Seasonal Method, Innovations State Space Models.
+* [Exercises](08-exercises.html) 
 

@@ -1,0 +1,18 @@
+---
+title: "Chapter 8 - Exponential Smoothing - Exercises"
+author: "Greg Foletta"
+date: "12/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+
+library(tidyverse)
+library(fpp3)
+library(tsibble)
+```
+
