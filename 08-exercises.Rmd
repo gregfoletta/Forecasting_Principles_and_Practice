@@ -11,8 +11,733 @@ knitr::opts_chunk$set(echo = TRUE)
 # Switch devices to allow for transparency..
 knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
 
+library(conflicted)
+
 library(tidyverse)
+library(magrittr)
 library(fpp3)
 library(tsibble)
+library(fable)
+
+conflict_prefer("filter", "dplyr")
 ```
 
+
+**1. Consider the the number of pigs slaughtered in Victoria, available in the aus_livestock dataset.**
+
+**a. Use the ETS() function in R to estimate the equivalent model for simple exponential smoothing. Find the optimal values of $\alpha$ and $\ell_0$ and generate forecasts for the next four months.**
+
+```{r}
+vic_pigs <-
+    aus_livestock %>% 
+    filter(Animal == 'Pigs' & State == 'Victoria')
+
+vic_pigs_fit <-
+    vic_pigs %>% 
+    model(ann = ETS(Count ~ error('A') + season('N') + trend('N'), opt_crit = 'mse'))
+
+report(vic_pigs_fit)
+```
+
+We see that $\alpha = 0.32$ based on minimisation of MSE, and $\ell_0 = 100646$.
+
+```{r}
+vic_pigs_fit %>%
+    forecast(h = 4) %>% 
+    autoplot(filter_index(vic_pigs, '2010' ~ .)) +
+    labs(
+        title = 'Victorian Pig Production',
+        subtitle = 'Four month Forecast - Simple Exponential',
+        x = 'Month/Year',
+        y = '# of Animals'
+    )
+```
+
+
+**b. Compute a 95% prediction interval for the first forecast using $\hat{y} \pm 1.96s$ where $s$ is the standard deviation of the residuals. Compare your interval with the interval produced by R.**
+
+We recall that the forecast variance for an 'ANN' model is: 
+
+$$ \sigma_h^2 = \sigma^2[1 + \alpha^2(h - 1)] $$
+
+We create a function, and pull We pull the values out of the report, then apply it to the forecast.
+
+```{r}
+# Simple exponential forecast prediction interval
+ann_prediction_int <- function(sigma2, alpha, h) {
+    sigma2 * (1 + alpha^2 * (h - 1))
+}
+
+# Pull the residual variance
+resid_variance <-
+    vic_pigs_fit %>% 
+    glance() %>% 
+    pull(sigma2)
+
+# Pull the calculated alpha
+model_alpha <-
+    vic_pigs_fit %>% 
+    tidy() %>% 
+    filter(term == 'alpha') %>% 
+    pull(estimate)
+
+# Calculate the 95% confidence interval
+vic_pigs_fit %>% 
+    forecast(h = 4) %>% 
+    rownames_to_column(var = 'h') %>% 
+    mutate(h = as.double(h)) %>% 
+    mutate(
+        sigma2_h = map_dbl(h, ~ann_prediction_int(resid_variance, model_alpha, .x)),
+        sigma_h = sqrt(sigma2_h),
+        `95%_lo` = .mean - (1.96 * sigma_h),
+        `95%_hi` = .mean + (1.96 * sigma_h)
+    ) %>%
+    as_tibble() %>% 
+    select(`95%_lo`, `95%_hi`, Month)
+```
+
+
+
+```{r}
+vic_pigs_fit %>% 
+    forecast(h = 4) %>% 
+    hilo(level = 95) %>% 
+    select(`95%`)
+```
+
+**2. Write your own function to implement simple exponential smoothing. The function should take arguments y (the time series), $\alpha$ (the smoothing parameter) and $\ell_0$ (the initial level). It should return the forecast of the next observation in the series. Does it give the same forecast as ETS()?**
+
+```{r}
+# Define the function
+
+ell_t <- function(alpha, y_t, ell_t_min_1) {
+    (alpha * y_t) + ((1 - alpha) * ell_t_min_1)
+}
+    
+
+my_ETS <- function(y, alpha, ell_zero) {
+    ell <- c()
+    ell[1] <- ell_zero
+    
+    for (i in head(seq(y), -1)) {
+        ell[i+1] <- ell_t(alpha, y[i], ell[i])
+    }                              
+    
+    return(ell)
+}
+
+ell_zero <-
+    vic_pigs_fit %>% 
+    tidy() %>% 
+    filter(term == 'l') %>% 
+    pull(estimate)
+
+vic_pigs_fit %>% 
+    augment() %>% 
+    mutate(my_ETS = my_ETS(y = Count, alpha = model_alpha, ell_zero = ell_zero))
+```
+
+
+**3. Modify your function from the previous exercise to return the sum of squared errors rather than the forecast of the next observation. Then use the optim() function to find the optimal values of $\alpha$ and $\ell_0$**
+
+**Do you get the same values as the ETS() function?**
+
+```{r}
+my_ETS_MSE <- function(y, alpha, ell_zero) {
+    y_hat <- my_ETS(y, alpha, ell_zero)
+    
+    mean((y - y_hat)^2)
+}
+
+# My MSE function
+vic_pigs_fit %>% 
+    augment() %>% 
+    as_tibble() %>% 
+    summarise(MSE = my_ETS_MSE(Count, model_alpha, ell_zero))
+
+# glance() MSE function?
+vic_pigs_fit %>% 
+    glance() %>%
+    select(MSE)
+
+optim(
+    par = c(1, 2), 
+    fn = function(data, par) my_ETS_MSE(data, par[1], par[2]),
+    data = vic_pigs$Count 
+)
+```
+We see that we get the same values.
+
+**5. Combine your previous two functions to produce a function which both finds the optimal values of $\alpha$ and $\ell_0$ and produces a forecast of the next observation in the series.**
+
+```{r}
+my_ETS_point_forecast <- function(y) {
+    par <- 
+        y %>% 
+        optim(
+            par = c(1, 2), 
+            fn = function(data, par) my_ETS_MSE(data, par[1], par[2]),
+            data = .
+        )
+   
+    alpha <- par$par[1] 
+    ell_zero = par$par[2]
+    
+    ets_series <- my_ETS(y, alpha, ell_zero)
+    
+    # Point forecast 
+    ell_t(alpha, tail(y, n = 1), tail(ets_series, n = 1))
+}
+
+my_ETS_point_forecast(vic_pigs$Count)
+
+vic_pigs_fit %>% 
+    forecast(h = 1) %>% 
+    pull(.mean)
+
+```
+
+
+**5. Data set fma::books contains the daily sales of paperback and hardcover books at the same store. The task is to forecast the next four days’ sales for paperback and hardcover books.**
+
+```{r}
+head(fma::books)
+```
+
+
+**a. Plot the series and discuss the main features of the data.**
+
+```{r}
+fma::books %>% 
+    autoplot()
+```
+
+We see sales of paperback and hardcover books over time. There is a general trend upwards for both that appears to be at the same rate. There appears to be some seasonality in both that is more apparent in the paperback sales.
+
+**b. Use an ETS(A,N,N) model to forecast each series, and plot the forecasts.**
+
+```{r}
+fma::books %>%
+    as_tsibble() %>%
+    model(ets = ETS(value ~ error('A') + season('N') + trend('N'))) %>% 
+    forecast(h = 4) %>% 
+    autoplot(fma::books)
+```
+
+
+**c. Compute the RMSE values for the training data in each case.**
+
+```{r}
+fma::books %>%
+    as_tsibble() %>%
+    model(ets = ETS(value ~ error('A') + trend('N') + season('N'))) %>%
+    glance() %>% 
+    select(key, MSE) %>% 
+    mutate(RMSE = sqrt(MSE))
+```
+
+
+
+**6. We will continue with the daily sales of paperback and hardcover books in data set fma::books.**
+
+**a. Apply the appropriate model for Holt’s linear method to the paperback and hardcover book sales and compute four-day forecasts in each case.**
+
+```{r}
+# Holt's linear method is an AAN
+fma::books %>%
+    as_tsibble() %>% 
+    model(AAN = ETS(value ~ error('A') + trend('A') + season('N'))) %>% 
+    forecast(h = 4) %>% 
+    autoplot(fma::books)
+```
+
+**b. Compare the RMSE measures of Holt’s method for the two series to those of simple exponential smoothing in the previous question. (Remember that Holt’s method is using one more parameter than SES.) Discuss the merits of the two forecasting methods for these data sets.**
+
+```{r}
+q6b_model <- fma::books %>%
+    as_tsibble() %>% 
+    model(
+        ANN = ETS(value ~ error('A') + trend('N') + season('N')),
+        AAN = ETS(value ~ error('A') + trend('A') + season('N'))
+    )
+
+q6b_model %>% 
+    accuracy() %>% 
+    select(key, .model, RMSE)
+```
+We can see that the RMSE is better when taking into account the trend with Holt's method.
+
+**c. Compare the forecasts for the two series using both methods. Which do you think is best?**
+
+Given the clear trend we see the in the data, and it's consistency throughout, I would guess that Holt's method would provide better forecasts.
+
+**d. Calculate a 95% prediction interval for the first forecast for each series, using the RMSE values and assuming normal errors. Compare your intervals with those produced using R.**
+
+The forecast variance for an AAN model is:
+
+$$ \sigma^2_h = \sigma^2\bigg[1 + (h - 1)\big\{\alpha^2 + \alpha\beta h + \frac{1}{6}\beta^2 h (2h - 1)\big\}\bigg]  $$
+
+Let's create a function for this
+```{r}
+aan_prediction_int <- function(sigma2, alpha, beta, h) {
+    sigma2 * (1 + (h - 1)*(alpha^2 + (alpha * beta * h) + (1/6)*beta^2*h*(2*h - 1)))
+}
+```
+
+
+
+```{r}
+# Pull the hardcover values
+aan_coefs <-
+    q6b_model %>% 
+    select(AAN) %>% 
+    filter(key == 'Hardcover') %>% 
+    tidy() %>%
+    select(term, estimate) %>%
+    pivot_wider(names_from = term, values_from = estimate) %>% 
+    select(alpha, beta)
+
+aan_coefs
+
+aan_sigma2 <-
+    q6b_model %>% 
+    glance() %>% 
+    filter(key == 'Hardcover' & .model == 'AAN') %>% 
+    pull(sigma2)
+
+aan_sigma2
+```
+
+```{r}
+
+q6b_model %>%
+    forecast(h = 1) %>%
+    filter(.model == 'AAN' & key == 'Hardcover') %>% 
+    hilo() %>%
+    select(key, .model, .mean, `95%`) %>% 
+    mutate(
+        `-97.5` = .mean - (1.96 * sqrt(aan_prediction_int(aan_sigma2, aan_coefs[['alpha']], aan_coefs[['beta']],1))),
+        `+97.5` = .mean + (1.96 * sqrt(aan_prediction_int(aan_sigma2, aan_coefs[['alpha']], aan_coefs[['beta']],1))),
+    )
+```
+
+
+**7. Forecast the Chinese GDP from the global_economy data set using an ETS model. Experiment with the various options in the ETS() function to see how much the forecasts change with damped trend, or with a Box-Cox transformation. Try to develop an intuition of what each is doing to the forecasts.**
+
+```{r}
+china_economy <-
+    global_economy %>% 
+    filter(Country == 'China') %>% 
+    filter_index('1990' ~ .)
+
+autoplot(china_economy, .vars = GDP)
+```
+
+We recall that the dampening parameter $\phi$, which is $[0,1]$. If it's 1 then it's identical to Holt's. It's rarely less than .8.
+
+- With a trend, Holt's method
+- With a trend, dampening parameter .9
+- With a trend, dampening parameter .8
+
+```{r}
+china_ets <-
+    china_economy %>%
+    model(
+        aan = ETS(GDP ~ error('A') + trend('A') + season('N')),
+        aan_.9_phi = ETS(GDP ~ error('A') + trend('Ad', phi = .9) + season('N')),
+        aan_.8_phi = ETS(GDP ~ error('A') + trend('Ad', phi = .8) + season('N')),
+    )
+
+china_ets %>% 
+    forecast(h = 10) %>% 
+    autoplot(china_economy, level = NULL)
+
+china_ets %>% 
+    accuracy() %>% 
+    select(.model, RMSE)
+```
+
+The accuracy of a non-dampened trend is the best.
+
+The Box-Cox is used to make the seasonality the same across the entire series. This series doesn't exhibit seasonailty, so there are doubts as to its effect. Let's do it anyway:
+
+```{r}
+gdp_lambda <-
+    china_economy %>% 
+    features(GDP, features = guerrero) %>% 
+    pull(lambda_guerrero)
+
+china_box_cox_ets <-
+    china_economy %>% 
+    model(
+        ets_bc = ETS(box_cox(GDP, gdp_lambda)),
+        ets_log = ETS(log(GDP)),
+        aan = ETS(GDP ~ error('A') + trend('A') + season('N')),
+        aan_.9_phi = ETS(GDP ~ error('A') + trend('Ad', phi = .9) + season('N')),
+        aan_.8_phi = ETS(GDP ~ error('A') + trend('Ad', phi = .8) + season('N')),
+    )
+
+china_box_cox_ets %>% 
+    forecast(h = 15) %>% 
+    autoplot(china_economy, level = NULL)
+
+china_box_cox_ets %>% 
+    accuracy() %>% 
+    select(.model, RMSE)
+
+china_box_cox_ets %>% 
+    augment() %>% 
+    ggplot() +
+    geom_line(aes(Year, .fitted, colour = .model)) +
+    geom_line(aes(Year, GDP))
+```
+
+We see that the transformations have a much bigger effect on the forecasts than the dampening. Our training RMSE is also significantly higher.
+
+**8. Find an ETS model for the Gas data from aus_production and forecast the next few years. Why is multiplicative seasonality necessary here? Experiment with making the trend damped. Does it improve the forecasts?**
+
+Let's first take a look at the series
+
+```{r}
+aus_production %>% 
+    autoplot(Gas)
+```
+
+Set up our models:
+
+```{r, cache = TRUE}
+aus_gas_mdl <-
+    aus_production %>% 
+    model(
+        aaa = ETS(Gas ~ error('A') + trend('A') + season('A')),
+        aam = ETS(Gas ~ error('A') + trend('A') + season('M')),
+        aan_damp = ETS(Gas ~ error('A') + trend('Ad') + season('M'))
+    )
+```
+
+```{r}
+aus_gas_mdl %>%
+    forecast(h = 10) %>% 
+    autoplot(filter_index(aus_production, '2005' ~ .), level = NULL)
+```
+
+```{r}
+aus_gas_mdl %>% 
+    accuracy() %>%
+    select(.model, RMSE)
+```
+The seasonality is multiplicative because the variations in seasonality change in proportion to the year. Adding a dampening does not make the model any better.
+
+**9. Recall your retail time series data (from Exercise 6 in Section 2.10)**
+
+```{r}
+q9_retail <-
+    aus_retail %>%
+    filter(`Series ID` == 'A3349606J')
+
+autoplot(q9_retail, .vars = Turnover)
+```
+
+**a. Why is multiplicative seasonality necessary for this series?**
+
+Multiplicative seasonality is required when the seasonal variations change in proportion to the level. By looking at the graph we see the seasonal peaks are larger the higher the level.
+
+**b. Apply Holt-Winters’ multiplicative method to the data. Experiment with making the trend damped.**
+
+```{r}
+hsales_model <-
+    q9_retail %>%
+    model(
+        ets_mam = ETS(Turnover ~ error('M') + trend('A') + season('M')),
+        ets_mam_damp_.9 = ETS(Turnover ~ error('M') + trend('Ad', phi = .9) + season('M')),
+        ets_mam_damp_.8 = ETS(Turnover ~ error('M') + trend('Ad', phi = .8) + season('M'))
+    )
+
+```
+Dampening appears to provide a small improvement on the training RMSE.
+
+**c. Compare the RMSE of the one-step forecasts from the two methods. Which do you prefer?**
+
+```{r}
+hsales_model %>% 
+    accuracy() %>% 
+    select(.model, RMSE)
+```
+Dampening appears to improve the accuracy of the training RMSE
+
+**d. Check that the residuals from the best method look like white noise.**
+
+```{r}
+hsales_model %>% 
+    select(ets_mam_damp_.8) %>% 
+    gg_tsresiduals()
+```
+
+The residual plot appears to be white noise, with almost all of the autocorrelations being under the $\pm 2/\sqrt{T}$. They also normally disitributed, but there is a small amount of heteroskedacity, with the variance being larger earlier in the series.
+
+**e. Now find the test set RMSE, while training the model to the end of 2010. Can you beat the seasonal naïve approach from Exercise 7 in Section 5.10?**
+
+```{r}
+q9_test_set <- 
+    q9_retail %>% 
+    filter_index('2011-1' ~ '2017-12')
+
+q9_train_set <-
+    q9_retail %>% 
+    filter_index(. ~ '2010-12')
+
+q9_train_forecast <-
+    q9_train_set %>% 
+    model(
+        snaive = SNAIVE(Turnover),
+        ets_mam = ETS(Turnover ~ error('M') + trend('A') + season('M')),
+        ets_mam_damp_.8 = ETS(Turnover ~ error('M') + trend('Ad', phi = .8) + season('M')),
+        ets_mam_damp_.9 = ETS(Turnover ~ error('M') + trend('Ad', phi = .9) + season('M'))
+    ) %>% 
+    forecast(h = 84)
+
+q9_train_forecast %>% 
+    autoplot(q9_test_set, level = NULL)
+
+accuracy(q9_train_forecast, q9_test_set) %>% select(.model, RMSE)
+
+```
+
+The standard ETS MAM model does the best on the test set. We the damped ETS actually performs far worse than the seasonal naive mode. There isn't a reduction in the trend, hence why the dampening of the trend performs badly.
+
+**10.For the same retail data, try an STL decomposition applied to the Box-Cox transformed series, followed by ETS on the seasonally adjusted data. How does that compare with your best previous forecasts on the test set?**
+
+We first select a lambda for the Box-Cox transformation with Guerrero's method, then transform.
+
+```{r}
+# Determine Box-Cox lambda
+q10_lambda <-
+    q9_train_set %>% 
+    features(Turnover, features = guerrero) %>% 
+    pull(lambda_guerrero) %>%
+    print()
+
+# Transform
+q10_retail_train <-
+    q9_train_set %>% 
+    mutate(Turnover_BoxCox = box_cox(Turnover, q10_lambda))
+
+q10_retail_test <-
+    q9_test_set %>% 
+    mutate(Turnover_BoxCox = box_cox(Turnover, q10_lambda))
+
+q10_retail_train %>%
+    pivot_longer(c(Turnover, Turnover_BoxCox)) %>% 
+    ggplot() +
+    geom_line(aes(Month, value, colour = name))
+```
+
+Now let's do an STL decomposition:
+
+```{r}
+q10_model_stl <-
+    q10_retail_train %>% 
+    model(stl = STL(Turnover_BoxCox))
+
+q10_model_stl %>%
+    components() %>% 
+    pivot_longer(c(Turnover_BoxCox, season_adjust)) %>% 
+    ggplot() +
+    geom_line(aes(Month, value, colour = name))
+```
+
+Now we perform an ETS on the seasonally adjusted data.
+
+```{r}
+q10_forecast <- 
+    q10_model_stl %>% 
+    components() %>% 
+    update_tsibble(key = c(State, Industry)) %>%
+    select(-Turnover_BoxCox) %>% 
+    rename(Turnover_BoxCox = season_adjust) %>% 
+    model(ets = ETS(Turnover_BoxCox)) %>%
+    forecast(h = 84)
+
+q10_forecast %>% autoplot(q10_retail_test)
+
+q10_forecast %>% 
+    accuracy(q10_retail_test) %>% 
+    select(.model, RMSE)
+```
+The accuracy is better than the best accuracy of the ETS non-dampened above.
+
+After doing all of the above work, I remembered there is `decomposition_model()` which does this for me.
+
+```{r}
+q10_forecast <-
+    q9_train_set %>%
+    model(
+        decomposition_model(
+            STL(box_cox(Turnover, lambda = q10_lambda)),
+            ETS(season_adjust)
+        )
+    ) %>% 
+    forecast(h = 84)
+
+q10_forecast %>% 
+    autoplot(q10_retail_test)
+
+q10_forecast %>% 
+    accuracy(q10_retail_test) %>% 
+    select(RMSE)
+```
+
+**11. Compute the total domestic overnight trips for holidays across Australia from the tourism dataset.**
+
+```{r}
+# Extract out the holidays
+q11_tourism <-
+    tourism %>% 
+    filter(Purpose == 'Holiday') %T>%
+    print() 
+
+# Aggregate all of the regions
+q11_tourism <-
+    q11_tourism %>%
+    summarise(Trips = sum(Trips)) %T>%
+    print()
+```
+
+
+**a. Plot the data and describe the main features of the series.**
+
+```{r}
+q11_tourism %>% autoplot()
+```
+
+**b. Decompose the series using STL and obtain the seasonally adjusted data.**
+
+```{r}
+q11_tourism %>%
+    model(stl = STL(Trips)) %>% 
+    components() %>% 
+    ggplot() +
+    geom_line(aes(Quarter, Trips, colour = 'Trips')) +
+    geom_line(aes(Quarter, season_adjust, colour = 'Seasonal Adjustment')) +
+    labs(
+        title = 'Total Overnight Trips',
+        y = 'Quarter',
+        x = 'Trips',
+        colour = 'Series Type'
+    )
+```
+
+**c. Forecast the next two years of the series using an additive damped trend method applied to the seasonally adjusted data. (This can be specified using decomposition_model().)**
+
+```{r}
+q11_model_a <-
+    q11_tourism %>%
+    model(
+        decomp = decomposition_model(
+            STL(Trips),
+            ETS(season_adjust ~ error('A') + trend('Ad') + season('N'))
+        )
+    )
+
+q11_model_a %>% 
+    forecast(h = 8) %>% 
+    autoplot(q11_tourism)
+```
+
+**d. Forecast the next two years of the series using an appropriate model for Holt’s linear method applied to the seasonally adjusted data (as before but without damped trend).**
+
+```{r}
+q11_model_b<-
+    q11_tourism %>%
+    model(
+        decomp = decomposition_model(
+            STL(Trips),
+            ETS(season_adjust ~ error('A') + trend('A') + season('N'))
+        )
+    )
+
+q11_model_b %>% 
+    forecast(h = 8) %>% 
+    autoplot(q11_tourism)
+```
+
+
+
+**e. Now use ETS() to choose a seasonal model for the data.**
+
+```{r}
+q11_model_c <-
+    q11_tourism %>% 
+    model(ETS(Trips))
+
+q11_model_c %>% 
+    forecast(h = 8) %>%
+    autoplot(q11_tourism)
+```
+
+
+**f. Compare the RMSE of the ETS model with the RMSE of the models you obtained using STL decompositions. Which gives the better in-sample fits?**
+
+```{r}
+q11_models <-
+    q11_tourism %>% 
+    model(
+        dc_stl_ets_damp = decomposition_model(STL(Trips), ETS(season_adjust ~ error('A') + trend('Ad') + season('N'))),
+        dc_stl_etc_aan = decomposition_model(STL(Trips), ETS(season_adjust ~ error('A') + trend('A') + season('N'))),
+        ets = ETS(Trips)
+    )
+
+
+
+
+q11_models %>% 
+    forecast(h = '2 years') %>% 
+    autoplot(q11_tourism, level = NULL)
+
+q11_models %>% accuracy() %>% 
+    select(.model, RMSE)
+```
+
+**g. Compare the forecasts from the three approaches? Which seems most reasonable?**
+
+Holt's linear on the seasonally adjusted data.
+
+**h. Check the residuals of your preferred model.**
+
+```{r}
+q11_model_b %>% gg_tsresiduals()
+```
+
+
+**12. For this exercise use data set expsmooth::visitors, the monthly Australian short-term overseas visitors data, May 1985–April 2005.**
+
+**a. Make a time plot of your data and describe the main features of the series.**
+**b. Create a training set that withholds the last two years of available data. Forecast the test set using an appropriate model for Holt-Winters’ multiplicative method.**
+**c. Why is multiplicative seasonality necessary here?**
+**d. Forecast the two-year test set using each of the following methods:**
+**i. ETS model**
+**ii An additive ETS model applied to a log transformed series**
+**iii. seasonal naïve method**
+**iv. An STL decomposition applied to the log transformed data followed by an ETS model applied to the seasonally adjusted (transformed) data.i**
+**e. Which method gives the best forecasts? Does it pass the residual tests?**
+**f. Compare the same four methods using time series cross-validation instead of using a training and test set. Do you come to the same conclusions?**
+
+**13. a. Apply cross-validation techniques to produce 1 year ahead ETS and seasonal naïve forecasts for Portland cement production (from `aus_production`). Use a stretching data window with initial size of 5 years, and increment the window by one observation.**
+
+**b. Compute the MSE of the resulting 4-step-ahead errors. Comment on which forecasts are more accurate. Is this what you expected?**
+
+**14. Compare ETS(), SNAIVE() and decomposition_model(STL, ???) on the following six time series. You might need to use a Box-Cox transformation for the STL decomposition forecasts. Use a test set of three years to decide what gives the best forecasts:**
+
+**a. Beer and bricks production from aus_production**
+**b. Cost of drug subsidies for diabetes (ATC2 == "A10") and corticosteroids (ATC2 == "H02") from PBS**
+**c. Total food retailing turnover for Australia from aus_retail.**
+
+**15. a. Use ETS() to select an appropriate model for the following series: total number of trips across Australia using tourism, the closing prices for the four stocks in gafa_stock, and the lynx series in pelt. Does it always give good forecasts?**
+
+**b. Find an example where it does not work well. Can you figure out why?**
+
+**16. Show that the point forecasts from an ETS(M,A,M) model are the same as those obtained using Holt-Winters’ multiplicative method.**
+
+**17. Show that the forecast variance for an ETS(A,N,N) model is given by σ2[1+α2(h−1)].**
+
+**18. Write down 95% prediction intervals for an ETS(A,N,N) model as a function of ℓT, α, h and σ, assuming normally distributed errors.**
