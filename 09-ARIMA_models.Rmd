@@ -1,0 +1,689 @@
+---
+title: "Chapter 9 - ARIMA Models"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE, include = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+library(feasts)
+```
+
+ARIMA models provide another approach to time series forecasting. ARIMA and exponential smoothing are the two most widely used approaches. They provide complimentary approaches to the problem.
+
+- Exponential smoothing: description of the trend and seasonality in the data.
+- ARIMA: description of the autocorrelations in the data.
+
+# Stationarity and Differencing
+
+A stationary time series is one whose properties do not depend on the time at which the series is observed. Thus time series with trends or seasonality are not stationary. White noise is stationary.jjj
+
+A time series with cyclic behaviour is stationary, which may seem a little strange.
+
+## Differencing
+
+THe Google stock price is stationary, however the daily changes are stationary. This shows one way to make non-stationary time series into stationary ones, known as **differencing**.
+
+Transformations can help to stabilise the variance of a time series. Differencing helps to stabilise the mean by removing changes in the level of the series, and therefore eliminating (or reducing) trend and seasonality.
+
+## Random Walk Model
+
+The differences series is the change between consecutive observations in the original series:
+
+$$ y^\prime_t = y_t - y_{t-1}  $$
+There are $T - 1 $ values, since the difference of $y_1$ can't be calculated.
+
+When the differences series is white noise, the model can be written:
+
+$$ y_t = y_{t-1} + \epsilon_t $$
+
+which is the random walk model.
+
+Random walks have:
+
+- Long periods of apparent trends up or down
+- Sudden and unpredictable chages in direction.
+
+A closesly related model allows the differences to have a non-zero mean:
+
+$$ y_t - y_{t-1} = c + \epsilon_t \text{ or } y_t = c + y_{t-1} + \epsilon_t $$
+
+this is the model behind the drift method.
+
+## Second-Order Differencing
+
+Occasionally the differenced data is not stationary, in which case it may need to be differenced again. It's not very often you would need to go further than second order.
+
+$$ 
+y^{\prime\prime}_t = y^\prime_t - y^\prime_{t-1} \\ = y_t - 2y_{t-1} + y_{t-2} 
+$$
+## Seasonal Differencing
+
+A seasonal difference is the difference between an observation and the previous observation from the same season:
+
+$$ y^\prime_t = y_t - t_{t-m} $$
+where $m = $ the number of seasons. These are also called 'lag-m differences'.
+
+If seasonally differenced data appear to be white noise, then the appropriate model for the original data is:
+
+$$ y_t = y_{t-m} + \epsilon_t $$
+
+These models are equal to the last observation from the releant season - i.e. **seasonal naive** forecasts.
+
+```{r}
+PBS %>%  
+    filter(ATC2 == 'A10') %>% 
+    group_by(year(Month)) %>% 
+    summarise(Cost = sum(Cost)) %>% 
+    mutate(
+        Log_Cost = log(Cost),
+        Seasonal_Difference = difference(Log_Cost, lag = 12)
+    ) %>% 
+    pivot_longer(c(Cost, Log_Cost, Seasonal_Difference)) %>%
+    ggplot() +
+    geom_line(aes(Month, value)) +
+    facet_grid(vars(name), scales = 'free') +
+    labs(
+        x = 'Year',
+        y = 'Sales',
+        title = 'Antidiabetic Drug Sales in Australia'
+    )
+```
+
+In the graph above we can see that the transformation and differencing have made the series look stationary.
+
+To distinguish between seasonal and ordinary differences, ordinary differences are sometimes referred to as 'first differences', meaning differences at lag 1.
+
+Sometimes seasonal and first difference need to be taken to obtain stationary data:
+
+```{r}
+PBS %>% 
+    filter(ATC2 == 'H02') %>% 
+    summarise(Cost = sum(Cost)/1e6) %>% 
+    transmute(
+        Sales = Cost,
+        Log_Sales = log(Cost),
+        Seasonal_Change = difference(Log_Sales, 12),
+        Double_Difference = difference(Seasonal_Change, 1)
+    ) %>% 
+    gather('Type', 'Sales', !!!syms(measured_vars(.)), factor_key = TRUE) %>% 
+    ggplot() +
+    geom_line(aes(Month, Sales)) +
+    facet_grid(vars(Type), scales = 'free_y')
+```
+
+There is a degree of subjectivity is selecting which differences to apply. There are some formal tests, but there are always some choices to be made.
+
+When both seasona and first differences are applied, it makes no difference in which order.
+
+Other lags other than first and seasonal are feasible, but their interpretation is difficult.
+
+## Unit Root Tests
+
+A unit root tests allows us to test more objectively whether differencing is required. These are statistical hypothesis tests of stationarity.
+
+There are a number available, based on different assumptions. The authors use the KPSS unit root test.
+
+The null hypothesis is that the data is stationary, thus small p-values suggest differencing is require.
+
+```{r}
+google_2015 <- gafa_stock %>%
+    filter(Symbol == "GOOG") %>%
+    mutate(day = row_number()) %>%
+    update_tsibble(index = day, regular = TRUE) %>% 
+    filter(year(Date) == 2015)
+
+google_2015 %>% 
+    features(Close, unitroot_kpss)
+
+google_2015 %>% 
+    mutate(Diff_Close = difference(Close)) %>% 
+    features(Diff_Close, unitroot_kpss)
+        
+```
+In the first instance, we can reject the null hypothesis and conclude that the data are **not** stationary. In the second we can't reject the null-hypothesis, so we conclude the data are stationary.
+
+We can use the `unitroot_ndiffs()` feature to determine the number of first differences to carry out:
+
+```{r}
+google_2015 %>% 
+    features(Close, unitroot_ndiffs)
+```
+
+So there is one difference required to make the data stationary. There is also a `unitroot_nsdiffs()` to determine whether seasonal differencing is required. It uses seasonal strength (Chapter 4) to determine the appropriate number of seasonal differences required ($F_s < 0.64$ to determine no seasonal differences).
+
+# Backshift Notation
+
+The backward shift operator $B$ is a useful notation device when working with time series lags:
+
+$$
+By_t = y_{t-1} \\
+B(By_t) = B^2y_t = y_{t-2}
+$$
+So for monthly data, the same month last year would be $B^{12}y_t$.
+
+A first difference:
+
+$$ y^\prime_t = (1 - B)y_t = y_t - y_{t-1} $$
+
+A second difference can be:
+
+$$ y^{\prime\prime}_t = (1 - B)^2y_t = 1 -2B + B^2)y_t = y_t - 2y_{t-1} + y_{t-2} $$
+It's useful when combining differences, as the operator can be treated using ordinary algebraic rules.
+
+# Autoregressive Models
+
+In a multiple regression model, we forecast the variable of interest using a linear combination of predictors.
+
+In an autoregression model, we forecast the variable of interest using a linear combination of *past values* of the variable. The *auto* means it's regression of the variable against itself.
+
+The model is:
+
+$$ y_t = c + \phi_1 y_{t_1} + \phi_2 y_{t-2} + \ldots + \phi_p y_{t-p} + \epsilon_t $$
+What this is saying is that $y_t$ can be explained by past values.
+
+This is like a multiple regression with lagged values of $y_t$. We refer to this as an $AR(p)$ model.
+
+For an $AR(1)$ model:
+
+* When $\phi_1 = 0$, $y_t$ is equivalent to white noise.
+* When $\phi_1 = 1$ and $c = 0$, $y_t$ is equivalent to a random walk.
+* When $\phi_1 = 1$ and $c \ne 0$, $y_t$ is equivalent to a random walk with drift.
+* When $\phi_1 \lt 0$, $y_t$ tends to oscillate around the mean.
+
+Autoregressive models are usually restricted to stationary data, constraining the parameters:
+
+- AR(1): $-1 \lt \phi_1 \lt 1$
+- AR(2): $-1 \lt \phi_2 \lt 1$, $\phi_1 + \phi_2 \lt 1$, $\phi_2 - \phi_1 \lt 1$
+
+When $p \ge 3$ the restrictions are more complicated.
+
+# Moving Average Models
+
+Rather than using past values in a regression, a moving average model uses past forecast errors in a regression-like model:
+
+$$ y_t = c + \epsilon_t + \theta_1\epsilon_{t-1} + \ldots + \theta_q\epsilon_{t-q} $$
+where $\epsilon_t$ is white noise. We refer to this as an $MA(q)$ model.
+
+$y_t$ can be thought of as a weighted moving average of the past few forecasting errors. 
+
+Changing the $\theta$ parameters results in different time series patterns.
+
+It is possible to write any stationary $AR(p)$ model as an $MA(\infty)$ model. Using repeated substitution:
+
+$$
+\begin{align*}
+y_t &= \phi_1y_{t-1} + \varepsilon_t\\
+&= \phi_1(\phi_1y_{t-2} + \varepsilon_{t-1}) + \varepsilon_t\\
+&= \phi_1^2y_{t-2} + \phi_1 \varepsilon_{t-1} + \varepsilon_t\\
+&= \phi_1^3y_{t-3} + \phi_1^2\varepsilon_{t-2} + \phi_1 \varepsilon_{t-1} + \varepsilon_t\\
+&\text{etc.}
+\end{align*}
+$$
+Provided $-1 \lt \phi_1 \lt 1$, the value of $\phi_1^k$ will get smaller as $k$ gets larger, and eventually we obtain an $MA(\infty)$ process.
+
+The reverse result holds if we impose some constraints on the $MA$ parameters. Then the $MA$ model is called **invertible**: any invertible $MA(q)$ process is an $AR(\infty)$.
+
+## Non-seasonal ARIMA Models
+
+Combining differencing with autoregression and a moving average model, we obtain non-seasonal ARIMA. It's an acronym for **A**uto**R**egressive **I**ntegrated **M**oving **A**verage, where integration is a reverse of differencing.
+
+$$ y^\prime_t = c + \phi_1 y^\prime_{t-1} + \ldots + \phi_p y^\prime_{t-p} + \theta_1\epsilon_{t-1} + \ldots + \theta_q\epsilon_{t-q} + \epsilon_t $$
+
+where $y^\prime_t$ is the differenced series. The predictors include both lagged $y_t$ values and lagged errors. This is an $ARIMA(p,d,q)$ model where:
+
+- $p$ is the order of the autoregressive part, the number of lags of the dependent variable.
+- $d$ is the degree of first differencing involved, how many times the variable is differenced to become stationary.
+- $q$ is the order of the moving average part, the number of lags of the error term.
+
+Here are some special cases:
+
+- $ARIMA(0,0,0)$: white noise
+- $ARIMA(0,1,0)$ with no constant: random walk
+- $ARIMA(0,1,0)$ with a constant: random walk with drift
+- $ARIMA(p,0,0)$: autoregression
+- $ARIMA(0,0,q)$: moving average
+
+Once we combine components, the backshift notation makes it easier. For example the previous equation can be written as.
+
+Selecting appropriate $p$, $d$ and $q$ values can be difficult, however the `ARIMA()` function will do it for us.
+
+## Example: US Consumption
+
+Below we have consumption expenditure. Although quarterly, it doesn't appear to be a seasonal pattern:
+
+```{r}
+us_change %>% 
+    autoplot(Consumption) +
+    labs(
+        x = 'Quarter',
+        y = 'Percentage Change',
+        title = 'US Consumption'
+    )
+```
+
+Let's fit a `PDQ(0,0,0)` model:
+
+```{r}
+us_consump_fit <-
+    us_change %>% 
+    model(ARIMA(Consumption ~ PDQ(0,0,0)))
+
+us_consump_fit %>% report()
+```
+
+So this model is:lo
+
+$$ y_t = 0.316 + 0.573y_{t-1} - 0.362 \epsilon_{t-1} + 0.0925 \epsilon_{t-2} + 0.193 \epsilon_{t-3} + 0.316 $$
+
+where $\epsilon_t$ is white noise with a standard deviation of 0.577 = $\sqrt{.333}$.
+
+```{r}
+us_consump_fit %>% 
+    forecast(h = 10) %>% 
+    autoplot(us_change %>% slice_tail(n = 30))
+```
+
+## Understanding
+
+The constant $c$ has an important effect on the long-term forecasts:
+
+- $c = 0$ and $d = 0$: long-term forecasts go to zero.
+- $c = 0$ and $d = 1$: long-term forecasts go to a non-zero constand
+- $c = 0$ and $d = 2$: long-term forecasts follow a straight line.
+- $c \ne 0$ and $d = 0$: long-term forecasts go to the mean.
+- $c \ne 0$ and $d = 1$: long-term forecasts follow a straight line.
+- $c \e 0$ and $d = 2$: long-term forecasts follow a quadratic trend.
+
+The value of $d$ has an effect on the prediction intervals: the higher $d$, the more rapidly the prediction intervals increase in size.
+
+The value of $p$ is important if the data show cycles. To obtain cyclic forecasts, it is necessary to have $p \ge 2$, along with some additional conditions on the parameters.
+
+## ACF and PACF
+
+You can't usually tell the $p$ and $q$ values from the time plot. Sometimes you can from the ACF and PACF plots.
+
+ACF shows autocorrelations, measuring the relationship between $y_t$ and $y_{t-k}$ for different values of $k$. If $y_t$ and $y_{t-1}$ are correlated, then $y_{t-1}$ and $y_{t-2}$ must also be correlated. However then $y_t$ and $y_{t-2}$ might be correlated simply because of their connection to $y_{t-1}$.
+
+**Partial Autocorrelations** can be used. These measure the effects of $y_t$ and $y_{t-k}$ after removing the effects of lags $1,2,3,\ldots,k-1$.
+
+Each partial correlation can be estimated as the last coefficient in an autoregressive model. $\alpha_k$ is equal to the estimate of $\phi_k$ in an $AR(k)$ model.
+
+```{r}
+us_change %>% ACF(Consumption) %>% autoplot()
+
+us_change %>% PACF(Consumption) %>% autoplot()
+```
+
+The data may follow an $ARIMA(p,d,0)$ model if the following patterns are seen in the **differenced data**:
+
+- ACF is exponentially decaying or sinusoidal.
+- There is a significant spoke at lag $p$ in the PACF, but none beyond lag $p$.
+
+The data may follow an $ARIMA(0,d,q)$ model if the following patterns are seen in the **differenced data**:
+
+- The PACF is exponentially decaying or sinusoidal.
+- There is a significant spike at lasg $q$ in the ACF, but none beyond lag $q$.
+
+In the previous figures we see spikes in the ACF in the first three lags, followed by an almost significant spike at lag 4. In the PACF there are three significant lags.
+
+One spike can be ignored if it's just outside the limits and not in the first few lags, as the probability of a spike being significant by chance is reasonably high.
+
+The pattern in the first three spikes is wha we would expect from an $ARIMA(3,0,0)$, as the PACF is decreasing as the lag increases.
+
+```{r}
+us_change %>% 
+  model(ARIMA(Consumption ~ pdq(3,0,0) + PDQ(0,0,0))) %>% 
+  report()
+```
+
+As per the doco, `pdq()` specifiy non-seasonal components, with `PDQ()` used to specify seasonal components. Using `PDQ(0,0,0)` forces a non-seasonal fit.
+
+You can make the `ARIMA()` function work harder by using `stepwise = FALSE` and `approximation = FALSE`.
+
+You can also specify particular values that ARIMA can search for. For example using `ARIMA(y ~ pdq(1:3, 1, 0:2) + PDQ(0,0,0))`.
+
+# Estimation and Order
+
+## Maximum Likelihod Estimation
+
+Once the model order has been identified ($p$, $d$ and $q$), the parameters $c$, $\phi_{1 \ldots p}$ and $\theta_{1 \ldots q}$ need to be estimated.
+
+MLE is used, which maximises the probability of obtaining the data that has been observed. For ARIMA it is similar to *least squares*, minimising:
+
+$$ \sum_{t=1}^T \epsilon^2_t $$
+R will report the log-likkelihood of the data: the log of the probability of observed data coming from the estimated model. For given values of $p$, $d$ and $q$, R will try to maximise this log likelihood.
+
+## Information Criteria
+
+Akaike's Information Criterion is useful in determining the order of an ARIMA model. It's written as:
+
+$$ AIC = -2 log(L) + 2(p + q + k + 1) $$
+
+Where $L$ is the likelihood of the data, $k = 1$ if $c \ne 0$ and $k = 0$ if $c = 0$. The last term is the number of parameters in the model, including $\sigma^2$, the variance of the residuals.
+
+The corrected AIC can be written as:
+
+$$ AIC_c = AIC + \frac{2(p + q + k + 1)(p + q + k + 2)}{T - p -q - k -2} $$
+Good models are obtained by minimising either the $AIC$, the $AIC_c$ or the Bayesian Information Criterion $BIC$.
+
+This method is not good at selecting $d$, as changing $d$ changes the underlying data on which the likelihood is computed. The $AIC$ for different $p$ and $q$ is only comparable for the same $d$.
+
+# ARIMA Modelling in R
+
+# How Does ARIMA() Work?
+
+The `ARIMA()` function uses a variation of the Hyndman-Khandakar algorithm. It combines unit root tests, minimisation of $AIC_c$ and MLE to obtain an ARIMA model.
+
+1. The number of differences $0 \le d \le 2$ is determined using repeated Kwiatkowski–Phillips–Schmidt–Shin (KPSS) tests.
+  * Recall these test the null hypothesis that an observable time series is stationary.
+1. The values of $p$ and $q$ are then chosen by minimising the $AIC_c$ after differencing the data $d$ times. The algorithm uses a stepwise search, rather than testing every possible combination.
+  * Four initial models are fitted:
+    - ARIMA(0, d, 0)
+    - ARIMA(2, d, 2)
+    - ARIMA(1, d, 0)
+    - ARIMA(0, d, 1)
+  * A constant is included unless $d = 2$.
+  * If $d \le 1$ an additional model is also fitted: ARIMA(0, d, 0) without a constant.
+1. The best model (with the smallest $AIC_c$) is set to be the 'current' model.
+1. Variations on the current model are considered:
+  - Vary $p$ and $q$ by $\pm 1$
+  - Include/exclude $c$.
+1. The best model considered so far becomes the new current model.
+1. Go back to 4. until no lower $AIC_c$ can be found.
+
+## Choosing Your Own Model
+
+To choose your own model, use `ARIMA()` with `pdq()` and `PDQ()`.
+
+## Procedure
+
+When ditting to non-seasonal data, the following procedure is a general approach:
+
+1. Plot the data to observe unusual observations.
+1. If necessary, transform the data (Box-Cox) to stabilise the variance.
+1. If the data are non-stationary, take differences.
+1. Example the ACF/PACF: is ARIMA(p, d, 0) or ARIMA(0, d q) appropriate?
+1. Try the models, use $AIC_c$ to search for a better model.
+1. Check the residuals by plotting the ACF of the residuals, and doing a portmanteau test of the residuals
+  - Recall one portmanteau test is a Ljung-Box test.
+  - This tests whether any group of autocorrelations of a time series are different from zero.
+  - If the residuals **don't** look like white noise, try a modified model.
+1.Once the residuals look like white noise, calculate forecasts.
+
+## Example: Seasonally Adjusted Electrical Equipment Orders
+
+```{r}
+elec <-
+  fpp2::elecequip %>% 
+  as_tsibble()
+
+autoplot(elec, value)
+
+elec_decomp <-
+  elec %>% 
+  model(STL(value ~ season(window = 'periodic'))) %>% 
+  components() %>% 
+  select(-.model) %>% 
+  as_tsibble()
+
+autoplot(elec_decomp, season_adjust)
+```
+
+About the plot:
+
+- There are some sudden changes (dot com bust and GFC), otherwise there is nothing unusual.
+- No evidence of changing variance.
+- Data is clearly non-stationary, as the series wanders up and down for long periods. 
+- We take the difference, which looks stationary:
+
+```{r}
+elec_decomp %>% 
+  gg_tsdisplay(difference(season_adjust), plot_type = 'partial')
+```
+The PACF suggests an AR(3) model. We'll do an AR(3,1,1) 
+
+```{r}
+fit <-
+  elec_decomp %>% 
+  model(arima = ARIMA(season_adjust ~ pdq(3,1,1) + PDQ(0,0,0)))
+
+report(fit)
+```
+
+- The ACF plot of residuals from this model shows that the autocorrelations are within the threshold limits.
+
+```{r}
+fit %>% gg_tsresiduals()
+```
+A portmanteau test, with a large p-value, suggests residuals are white noise (null hypothesis can't be rejected).
+
+```{r}
+fit %>% 
+  augment() %>% 
+  features(.resid, ljung_box, lag = 24, dof = 4)
+```
+
+Forecasts
+```{r}
+fit %>% 
+  forecast() %>% 
+  autoplot(elec_decomp)
+
+fit %>% 
+  augment() %>% 
+  pivot_longer(c(season_adjust, .fitted)) %>% 
+  ggplot(aes(index, value)) +
+  geom_line(aes(colour = name)) +
+  labs(
+    title = 'Electricaal Equipment Orders',
+    subtitle = 'ARIMA Model on Seasonally Adjusted Data',
+    x = 'Month',
+    y = 'Orders',
+    colour = 'Series'
+  )
+```
+
+## Constants in R
+
+Non-seasonal ARIMA can be written as:
+
+$$ (1 - \phi_1 B - \ldots - \phi_p B^p)(1 - B)^d y_t \\
+= c + (1 + \theta_1 B + \ldots + \theta_q B^q)\epsilon_t
+$$
+Where $c = \mu(1 - \phi_1 - \ldots - \phi_p)$, and $\mu$ is the mean of $(1 - B)^d y_t$.
+
+Therefore the inclusion of a constant in a non-stationary ARIMA model is equivalent to including a polynomial trend of order $d$ in the forecast function. If omitted, the forecast function includes a polynomial trend of order $d - 1$. When $d = 0$, it's a special case that $\mu$ is the mean of $y_t$.
+
+The `ARIMA()` function will automatically determine if a constant be included. It can be specified by including a 0 or 1 in the model formula, like `lm()`.
+
+## Characteristic Roots
+
+The equation above can be re-written as:
+
+$$ \phi(B)(1-B)^d y_t = c + \theta(B)\epsilon_t $$
+
+where $\phi(B) = (1 - \phi_1 B - \ldots - \phi_p B^p)$ is a $p$th order polynomial in B, and $\theta(B) = (1 + \theta_1 B + \ldots + \theta_q B^q)$ is a $q$th order polynomial in B.
+
+- The stationarity conditions for the model are that the $p$ complex roots of $\phi(B)$ lie outside the unit circle. 
+- The invertibility conditions are that the $q$ complex roots of $\theta(B)$ lie outside the unit circle.
+
+```{r}
+gg_arma(fit)
+```
+
+# Forecasting
+
+## Point Forecasts
+
+Point forecasts can be calculated using three steps:
+
+- Expand the ARIMA equation so that $y_t$ is on the left hand side.
+- Rewrite the equation by replacing $t$ with $T + h$.
+- On the right hand side, replace:
+  - Future observations with their forecasts.
+  - Future errors with 0
+  - Past errors with the corresponding residuals.
+  
+Beginning with $h = 1$, these steps are repeated for $h = 2,3,\ldots$ until all forecasts have been calculated.
+
+## Prediction Intervals
+
+ARIMA prediction intervals are difficult, and the details are out of scope.
+
+- The first 95% prediction interval is $\hat{y}_{T+1|T} \pm 1.96\hat{\sigma}$, where $\hat{\sigma}$ s is the SD of the residuals.
+- Multi step fro ARIMA(0,0,q) is relatively easy. The model is:
+
+$$ y_t = \epsilon_t + \sum_{i=1}^q \theta_i \epsilon_{t-i} $$
+
+The forecast variance is:
+
+$$ \hat{\sigma}^2_h = \hat{\sigma}^2 \bigg[ 1 + sum_{i=1}^{h - 1} \hat{\theta}^2_i \bigg] \qquad \text{ for } h = 2,3,\ldots, $$
+
+- An $AR(1)$ can be written as an $MR(\infty)$ model. Using this equivalence, the above result can also be used to obain $AR(1)$ models.
+
+- More generalised results and other special cases are out of scope.
+
+The prediction intervals are based on two key assumptions:
+
+- The residuals are uncorrelated
+- The residuals are normally distributed.
+
+In general the prediction intervals increase as the forecast horizon increases. For stationary models ($d = 0$) they will converge, so the predictions for long horizons are all the same. For $d \ge 1$ they will continue to grow into the future.
+
+As with most PI calculations, the ARIMA based intervals tend to be too narrow. This occurs because only the variation in the errors has been accounted for. There is also variation in the parameter estimates & the model order that hasn't been accounted for.
+
+# Seasonal ARIMA
+
+A seasonal ARIMA is formed by including additional seasonal terms: $ARIMA(p,d,q)(P,D,Q)_m$, where $m$ is the seasonal period (e.g. number of observations per year).
+
+The seasonal part of the model is similar, but involve backshifts of the seasonal period.
+
+As an example, an $ARIMA(1,1,1)(1,1,1)_4$ model (without a constant) can be written as:
+
+$$ (1 - \phi_1 B)(1 - \Phi_1 B^4)(1-B)(1-B^4) y_t = (1 + \theta_1B)(1 + \Theta_1 B^4)\epsilon_t$$
+
+The seasonal terms are multiplied by the non-seasonal terms.
+
+## ACF / PACF
+
+The seasonal part of an AR or MA model will be seen in the seasonal lags. 
+
+- An $ARIMA(0,0,0)(0,0,1)_12$ will show
+  - A spike at lag 12
+  - No other significant spikes
+  - An exponential decay in the seasonal lags of the PACF.
+  
+- An $ARIMA(0,0,0)(1,0,0)_12$ will show
+  - Exponential decay in the seasonal lag of the ACF
+  - A single significant spike at lag 12 in the PACF
+  
+The modelling procedure is almost the same as non-seasonal data, except seasonal AR and MA terms need to be selected as well.
+
+## Example - European Quarterly Retail Trade
+
+```{r}
+eu_retail <-
+  fpp2::euretail %>% 
+  as_tsibble()
+
+eu_retail %>% 
+  autoplot(value) +
+  labs(
+    title = 'European Quarterly Retail Trade',
+    x = 'Quarter',
+    y = 'Retail Index'
+  )
+```
+
+The plot shows:
+
+- Non-stationarity
+- Some seasonality
+
+The data are clearly non-stationary, with some seasonality, so a seasonal difference is taken:
+
+```{r}
+eu_retail %>% 
+  gg_tsdisplay(difference(value, 4), plot_type = 'partial')
+```
+
+These also appear to be non-stationary, so an additional first difference is taken:
+
+```{r}
+eu_retail %>% 
+  gg_tsdisplay(difference(difference(value,4)), plot_type = 'partial')
+```
+What is an appropriate ARIMA model given the above details?
+
+The significant spike at lag 1 in the ACF suggests a non-seasonal MA(1) component, and the significant spike at lag 4 in the ACF suggests a seasonal MA(1) component. Thus we start with a $ARIMA(0,1,1)(0,1,1)_4 model.
+
+By analagous logic applied to the PACF, we could started with an $ARIMA(1,1,0)(1,1,0)_4$.
+
+```{r}
+fit <-
+  eu_retail %>% 
+  model(
+    arima = ARIMA(value ~ pdq(0,1,1) + PDQ(0,1,1))
+  )
+
+fit %>% gg_tsresiduals()
+```
+
+We see significant spikes at lag 2, and an almost significant spike at 3, indicating that some additional non-seasonal terms need to be included. The $AIC_c$ of $ARIMA(0,1,2)(0,1,1)_4$ and $ARIMA(0,1,3)(0,1,1)_4$ are inspected, with the latter giving the best result.
+
+```{r}
+fit <-
+  eu_retail %>% 
+  model(
+    arima = ARIMA(value ~ pdq(0,1,3) + PDQ(0,1,1))
+  )
+
+fit %>% gg_tsresiduals()
+```
+
+Forcasts for the next three years are shown:
+
+```{r}
+fit %>% 
+  forecast(h = 12) %>% 
+  autoplot(eu_retail) +
+  labs(
+    title = 'European Quarterly Trade',
+    subtitle = 'ARIMA(0,1,3)(0,1,1) Model',
+    x = 'Quarter',
+    y = 'Retail Index'
+  )
+```
+
+Remember that we can cal `ARIMA()` without the lag parameters and it would have selected the same results:
+
+```{r}
+eu_retail %>% 
+  model(ARIMA(value)) %>% 
+  report()
+```
+
+The `ARIMA()` function uses `unitroot_nsdiffs()` to determine $D$ (the number of seasonal differences to use) and `unitroot_ndiffs()` to determine $d$ (the numnber of ordinary differences to use).
+
+

@@ -44,3 +44,8 @@ output:
 * [Notes](08-exponential_smoothing.html) - Simple exponential smoothing, Holt's Method, Holt-Winters Seasonal Method, Innovations State Space Models.
 * [Exercises](08-exercises.html) 
 
+# Chapter 9 - ARIMA Models
+
+* [Notes](09-ARIMA_models.html) - Stationarity and Differencing, Backshift Notation, Autoregressive Models, Moving Average Models, Estimation and Order, Forecasting, Seasonal ARIMA. 
+
+

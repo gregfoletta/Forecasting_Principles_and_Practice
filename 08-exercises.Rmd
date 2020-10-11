@@ -712,32 +712,341 @@ q11_model_b %>% gg_tsresiduals()
 **12. For this exercise use data set expsmooth::visitors, the monthly Australian short-term overseas visitors data, May 1985–April 2005.**
 
 **a. Make a time plot of your data and describe the main features of the series.**
+
+```{r}
+expsmooth::visitors %>% 
+    as_tsibble() %>% 
+    autoplot()
+```
+
+This is a time series, starting from around 1986 and finishing in around 2006. There is a clear upward trend and clear seasonality. The seasonality appears to be larger as the level increases, indicating a multiplicative seasonal model is required.
+
 **b. Create a training set that withholds the last two years of available data. Forecast the test set using an appropriate model for Holt-Winters’ multiplicative method.**
+
+```{r}
+q12_train <-
+    expsmooth::visitors %>% 
+    as_tsibble() %>% 
+    filter_index(. ~ '2003 April')
+
+q12_test <-
+    expsmooth::visitors %>% 
+    as_tsibble() %>% 
+    filter_index('2003 May' ~ .)
+
+q12_model <-
+    q12_train %>% 
+    model(ETS(value ~ error('A') + trend('A') + season('M')))
+
+q12_model %>%
+    forecast(h = '2 years') %>% 
+    autoplot(q12_test) +
+    labs(
+        x = 'Month',
+        y = '# of Visitors',
+        title = 'Australian Short Term Visitors',
+        subtitle = '2 year Forecast - Holt-Winters Multiplicative'
+    )
+```
+
+
+
 **c. Why is multiplicative seasonality necessary here?**
+
+As mentioned before, because the seasonality is proportional to the level.
+
 **d. Forecast the two-year test set using each of the following methods:**
+
 **i. ETS model**
 **ii An additive ETS model applied to a log transformed series**
 **iii. seasonal naïve method**
-**iv. An STL decomposition applied to the log transformed data followed by an ETS model applied to the seasonally adjusted (transformed) data.i**
+**iv. An STL decomposition applied to the log transformed data followed by an ETS model applied to the seasonally adjusted (transformed) data.**
+
+```{r}
+q12_agg_models <-
+    q12_train %>% 
+    model(
+        ets = ETS(value),
+        ets_aaa_log = ETS(log(value) ~ error('A') + trend('A') + season('A')),
+        snaive = SNAIVE(value),
+        stl_decomp = decomposition_model(
+            STL(log(value)),
+            ETS(season_adjust ~ error('A') + trend('A'))
+        )
+    )
+```
+
+
 **e. Which method gives the best forecasts? Does it pass the residual tests?**
+
+```{r}
+q12_agg_models %>%
+    forecast(h = '2 years') %>% 
+    accuracy(q12_test) %>% 
+    select(.model, RMSE)
+
+q12_agg_models %>% 
+    forecast(h = '2 years') %>% 
+    autoplot(q12_test, level = NULL)
+```
+The seasonal naive model actually gave the best test forecasts. Let's check the residiuals:
+
+```{r}
+q12_agg_models %>% 
+    select(snaive) %>% 
+    gg_tsresiduals()
+```
+
+The residual diagnostics don't look good for this method. There's heteroskedacticity as the series goes out, they appear normal but the mean is shifted up, and there is still some autocorrelation.
+
 **f. Compare the same four methods using time series cross-validation instead of using a training and test set. Do you come to the same conclusions?**
+
+```{r}
+visitors <- expsmooth::visitors %>% as_tsibble()
+
+visitors_stretch <-
+    expsmooth::visitors %>% 
+    as_tsibble() %>% 
+    stretch_tsibble(.init = 120, .step = 10)
+   
+visitors_stretch %>%  
+    model(
+        ets = ETS(value),
+        ets_aaa_log = ETS(log(value) ~ error('A') + trend('A') + season('A')),
+        snaive = SNAIVE(value),
+        stl_decomp = decomposition_model(
+            STL(log(value)),
+            ETS(season_adjust ~ error('A') + trend('A'))
+        )
+    ) %>% 
+    forecast(h = 1) %>% 
+    accuracy(visitors) %>%
+    select(.model, RMSE)
+```
+
+We see a different outcome here, with the STL decomposition with ETS on the seasonal adjustment performing the best.
 
 **13. a. Apply cross-validation techniques to produce 1 year ahead ETS and seasonal naïve forecasts for Portland cement production (from `aus_production`). Use a stretching data window with initial size of 5 years, and increment the window by one observation.**
 
+```{r}
+aus_production %>% 
+    autoplot(Cement)
+```
+
+
+```{r}
+cement_cv_fc <-
+aus_production %>% 
+    stretch_tsibble(.init = 20, .step = 1) %>% 
+    model(
+        ETS(Cement),
+        SNAIVE(Cement)
+    ) %>% 
+    forecast(h = 4)
+```
+
 **b. Compute the MSE of the resulting 4-step-ahead errors. Comment on which forecasts are more accurate. Is this what you expected?**
+
+```{r}
+cement_cv_fc %>% 
+    accuracy(aus_production) %>% 
+    select(.model, RMSE)
+```
+This is what I would expect - I would not expect the seasonal naive to be more accurate.
 
 **14. Compare ETS(), SNAIVE() and decomposition_model(STL, ???) on the following six time series. You might need to use a Box-Cox transformation for the STL decomposition forecasts. Use a test set of three years to decide what gives the best forecasts:**
 
 **a. Beer and bricks production from aus_production**
+
+```{r}
+aus_production %>% autoplot(Beer)
+
+aus_production %>%
+    slide_tsibble(.size = 16, .step = 8) %>% 
+    model(
+        snaive = SNAIVE(Beer),
+        ets = ETS(Beer),
+        stl_ets_decomp = decomposition_model(
+            STL(Beer),
+            ETS(season_adjust)
+        )
+    ) %>% 
+    forecast(h = '3 years') %>% 
+    accuracy(aus_production) %>% 
+    select(.model, RMSE)
+```
+
+
+```{r}
+aus_production %>% autoplot(Bricks)
+
+aus_production %>% 
+    slide_tsibble(.size = 16, .step = 8) %>% 
+    model(
+        snaive = SNAIVE(Bricks),
+        ets = ETS(Bricks),
+        stl_ets_decomp = decomposition_model(
+            STL(Bricks),
+            ETS(season_adjust)
+        )
+    ) %>% 
+    forecast(h = '3 years') %>% 
+    accuracy(aus_production) %>% 
+    select(.model, RMSE)
+```
+
+
+
+
 **b. Cost of drug subsidies for diabetes (ATC2 == "A10") and corticosteroids (ATC2 == "H02") from PBS**
+
+```{r}
+pbs_diabetes_steroids <-
+    PBS %>%
+    filter(
+        ATC2 == 'A10' | ATC2 == 'H02'
+    ) %>% 
+    summarise(Cost = sum(Cost))
+
+pbs_diabetes_steroids %>% autoplot(.vars = Cost)
+```
+We see increasing seasonality with the level of the series. We will apply a Box-Cox transformation:
+
+```{r}
+pbs_bc_lambda <-
+    pbs_diabetes_steroids %>% 
+    features(Cost, features = guerrero) %>% 
+    pull(lambda_guerrero)
+
+pbs_diabetes_steroids <-
+    pbs_diabetes_steroids %>%
+    mutate(Cost_BC = box_cox(Cost, pbs_bc_lambda))
+
+pbs_diabetes_steroids %>% 
+    autoplot(.vars = Cost_BC)
+   
+pbs_diabetes_steroids %>%  
+    slide_tsibble(.size = 16, .step = 8) %>% 
+    model(
+        snaive = SNAIVE(Cost_BC),
+        ets = ETS(Cost_BC),
+        stl_ets_decomp = decomposition_model(
+            STL(Cost_BC),
+            ETS(season_adjust)
+        )
+    ) %>% 
+    forecast(h = '3 years') %>% 
+    accuracy(pbs_diabetes_steroids) %>% 
+    select(.model, RMSE)
+```
+
 **c. Total food retailing turnover for Australia from aus_retail.**
+
+```{r}
+aus_food_turnover <-
+    aus_retail %>% 
+    filter(Industry == 'Cafes, restaurants and catering services') %>% 
+    summarise(Turnover = sum(Turnover))
+
+aus_food_turnover %>% autoplot(.vars = Turnover)
+
+```
+
+Again, we perform a Box-Cox transformation on the data.
+
+```{r}
+aus_food_bc_lambda <-
+    aus_food_turnover %>% 
+    features(Turnover, features = guerrero) %>% 
+    pull(lambda_guerrero)
+
+aus_food_turnover <-
+    aus_food_turnover %>% 
+    mutate(Turnover_BC = box_cox(Turnover, aus_food_bc_lambda))
+
+aus_food_turnover %>% autoplot(.vars = Turnover_BC)
+
+aus_food_turnover %>% 
+ slide_tsibble(.size = 16, .step = 8) %>% 
+    model(
+        snaive = SNAIVE(Turnover_BC),
+        ets = ETS(Turnover_BC),
+        stl_ets_decomp = decomposition_model(
+            STL(Turnover_BC),
+            ETS(season_adjust)
+        )
+    ) %>% 
+    forecast(h = '3 years') %>% 
+    accuracy(aus_food_turnover) %>% 
+    select(.model, RMSE)
+```
+
 
 **15. a. Use ETS() to select an appropriate model for the following series: total number of trips across Australia using tourism, the closing prices for the four stocks in gafa_stock, and the lynx series in pelt. Does it always give good forecasts?**
 
+First look at total number of trips:
+
+```{r}
+q15_tourism <-
+    tourism %>% 
+    summarise(Trips = sum(Trips)) 
+
+q15_tourism %>% autoplot()
+
+q15_forecast <-
+    q15_tourism %>% 
+    slide_tsibble(.size = 32, .step = 12) %>% 
+    model(
+        ETS(Trips)
+    ) %>% 
+    forecast(h = 5)
+```
+```{r}
+gafa_by_day <-
+    gafa_stock %>% 
+    group_by(Symbol) %>% 
+    mutate(day = row_number()) %>% 
+    select(day, everything()) %>% 
+    arrange(day) %>% 
+    ungroup() %>% 
+    update_tsibble(index = day)
+
+gafa_by_day %>% autoplot(.vars = Close)
+```
+
+```{r}
+gafa_by_day %>% 
+    model(ETS(Close)) %>% 
+    forecast(h = 20) %>% 
+    autoplot(gafa_by_day %>% group_by(Symbol) %>% slice_tail(n = 50))
+```
+
+
+
+```{r}
+pelt %>% autoplot(Lynx)
+
+pelt %>% 
+    model(ETS(Lynx)) %>% 
+    forecast(h = 12) %>% 
+    autoplot(pelt)
+```
+
+
 **b. Find an example where it does not work well. Can you figure out why?**
+
+ETS does not work well on the Pelt data set. This is cyclic rather than seasonal. What's the difference? Seasonal patterns are based on specific time periods, i.e day, week, quarter, year. It's always of a fixed and known period. 
+
+Cyclic patterns are not of a fixed period - think of business cycles.
 
 **16. Show that the point forecasts from an ETS(M,A,M) model are the same as those obtained using Holt-Winters’ multiplicative method.**
 
+Skipped
+
 **17. Show that the forecast variance for an ETS(A,N,N) model is given by σ2[1+α2(h−1)].**
 
+Skipped
+
 **18. Write down 95% prediction intervals for an ETS(A,N,N) model as a function of ℓT, α, h and σ, assuming normally distributed errors.**
+
+Skipped
