@@ -686,4 +686,70 @@ eu_retail %>%
 
 The `ARIMA()` function uses `unitroot_nsdiffs()` to determine $D$ (the number of seasonal differences to use) and `unitroot_ndiffs()` to determine $d$ (the numnber of ordinary differences to use).
 
+# ARIMA vs ETS
+
+ARIMA models are not more general than exponential smoothing. While liner exponential smoothing models are all special cases of ARIMA models, the non-linear exponential smoothing models have no ARIMA counterparts.
+
+All ETS models are non-stationary, while *some* ARIMA models are stationary.
+
+The ETS models with seasonality or non-damped trend both have two unit roots: they need two levels of differencing to make them stationary.
+
+The following are some equivalence relationships:
+
+- ETS(A,N,N) -> ARIMA(0,1,1)
+  - Params: $\theta_1 = \alpha - 1$
+- ETS(A,A,N) -> ARIMA(0,2,2)
+  - Params: $\theta_1 = \alpha + \beta - 2$, $ \theta_2 = 1 - \alpha$
+  
+$AIC_c$ is useful for selecting within a class of models, but it can't be used to select between ARIMA and ETS because the likelihood is computed in different ways.
+
+
+## Examples - Non-Seasonal Data - Comparing `ARIMA()` and `ETS()`
+
+Time series cross-validation can be used to compare models.
+
+```{r}
+au_economy <-
+  global_economy %>% 
+  filter(Code == 'AUS') %>% 
+  mutate(Population = Population / 1e6)
+
+au_economy %>% 
+  slice(-n()) %>% 
+  stretch_tsibble(.init = 10) %>% 
+  model(
+    ETS(Population),
+    ARIMA(Population)
+  ) %>% 
+  forecast(h = 1) %>% 
+  accuracy(au_economy)
+```
+
+In this instance the ETS model performs best.
+
+
+
+## Examples - Seasonal Data - Comparing `ARIMA()` and `ETS()`
+
+```{r}
+au_cement <-
+  aus_production %>% 
+  filter(year(Quarter) >= 1988)
+
+au_cement %>% autoplot(Cement)
+
+au_cement_models <-
+  au_cement %>% 
+  slice(-n()) %>% 
+  stretch_tsibble(.init = 50) %>% 
+  model(
+    ETS(Cement),
+    ARIMA(Cement)
+  )
+
+au_cement_models %>% 
+  forecast(h = 1) %>% 
+  accuracy(au_cement)
+```
+
 
