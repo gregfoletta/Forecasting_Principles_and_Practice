@@ -1,0 +1,341 @@
+---
+title: "Chapter 13 - Forecasting Issues"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE, include = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+library(feasts)
+```
+
+
+# Weekly, Daily and Sub-Daily Data
+
+All of these types can be challenging, for different reasons.
+
+## Weekly Data
+
+Weekly data is difficult to work with because the seasonal period - the number of weeks in a year - is both large and non-integer. The average number of weeks in a year is 52.18.
+
+Most methods assume an integer season, and even if we approximate to 52, they don't handle a large seasonal period efficiently.
+
+The simplest approach is to use a non-seasonal method applied to seasonally adjusted data.
+
+```{r}
+gasoline_dcmp_spec <-
+    decomposition_model(
+        STL(Barrels),
+        ETS(season_adjust ~ season('N'))
+    )
+
+us_gasoline %>% 
+    model(stl_ets = gasoline_dcmp_spec) %>% 
+    forecast(h = '2 years') %>% 
+    autoplot(us_gasoline)
+```
+
+An alternative approach is to use a dynamic harmonic regression model.
+
+```{r}
+us_gasoline %>% 
+    model(dhr = ARIMA(Barrels ~ PDQ(0,0,0) + fourier(K = 6))) %>% 
+    forecast(h = '2 years') %>% 
+    autoplot(us_gasoline)
+```
+
+The STL approach is preferable when the seasonality changes over time. The DHR approach is preferable if there are covariates that are useful predictors, as these can be added as additional regressors.
+
+## Daily and Sub-Daily Data
+
+These are difficult because they generally have multiple seasonal patterns. If the time series is short so that there is only one type of seasonality, it's possible to use one of the single-season methods (ETS or seasonal ARIMA). If it is long and there are multiple seasons, STL, dynamic harmonic regression or Prophet will be required.
+
+However these methods only account for regular seasonality. Easter, Id, or Chinese New Year make it difficult. Even with monthly data this can be difficult, as for example Easter can be in March or April.
+
+The best way to deal with holiday effects is to add dummy variables to the model. This can be done within `ARIMA()` or `prophet()`, but not withing `ETS()`.
+
+# Time Series of Counts
+
+All previous methods assume a continuous sample space. Often data comes in the form of counts (1,2,3,...). For example we can't have 2.343 customers.
+
+In practice it doesn't matter if the counts are large. If the number of "customers" is at least 100, then the difference between a continuous $[100, \infty)$ and a discrete space ${100, 101, 102, \ldots}$ has no perceivable effect on the forecasts.
+
+However if the counts are small, then we need to use a method more appropriate for a sample space of non-negatice integers.
+
+One simple method is **Croston's Method**.
+
+THe procedure:
+
+- Create two new series from the original by noting which time periods contains zero.
+  - $q_i$ is the $i$th non-zero quantity.
+  - $a_i$ is the time between $q_{i-1}$ and $q_i$.
+- Croston's involves separate simple exponential smoothing on the two new series.
+- Because this is often applied to demand for items, $q$ is called 'demand' and $a$ the 'inter-arrival time'.
+
+If $\hat{q}_{i + 1 \mid i}$ and $\hat{a}_{i + 1 \mid i}$ are the one step forecasts, then Croston's method gives:
+
+$$
+\hat{q}_{i + 1 \mid i} = (1 - \alpha_q)  \hat{q}_{i - 1 \mid i} + \alpha_q q_i\\
+\hat{a}_{i + 1 \mid i} = (1 - \alpha_a) \hat{a}_{i + 1 \mid i} + \alpha_a a_i
+$$
+The smoothing alpha parameters take values between 0 and 1.
+
+If $j$ is the time for the last observed positive observation, then the $h$-step ahead forecast for the demand at time $T$ is given by the ratio:
+
+$$
+\hat{y}_{T + h \mid T} = \frac{ \hat{q}_{j+1\mid j} }{ \hat{a}_{j + 1 \mid j} }
+$$
+There are no algebraic results to compute prediction intervals.
+
+The `CROSTON()` function produces forecasts for Croston's method. The two smoothing parameters are estimated from the data.
+
+# Forecasts within Limits
+
+It is common to want forecasts to be positive. i
+
+## Positive Forecasts
+
+To do this we can work on the log scale. Consider the example below: because of the log transformation, the forecast distributions will continue to be positive.
+
+```{r}
+egg_prices <- prices %>% drop_na(eggs)
+
+egg_prices %>% 
+  model(
+    transform = ETS(log(eggs) ~ trend('A')),
+    standard = ETS(eggs ~ trend('A'))
+  ) %>% 
+  forecast(h = 100) %>%
+  autoplot(egg_prices) +
+  geom_hline(yintercept = 0) +
+  facet_grid(vars(.model))
+```
+
+
+## Interval Constraints
+
+Imagine the egg prices were constrained between $a = 200$ and $b = 20$. The data can be transformed into a scaled logit.
+
+This maps the $(a,b)$ interval on to the whole real line:
+
+$$
+y = log\bigg( \frac{ x - a }{ b - x } \bigg)
+$$
+```{r}
+scaled_logit <- function(x, lower = 0, upper = 1) {
+  log((x - lower) / (upper - x))
+}
+inv_scaled_logit <- function(x, lower = 0, upper = 1) {
+  (upper - lower) * exp(x) / (1 + exp(x)) + lower
+}
+
+my_scaled_logit <- new_transformation(scaled_logit, inv_scaled_logit)
+
+egg_prices %>%
+  model(
+    ETS(my_scaled_logit(eggs, lower = 20, upper = 400) ~ trend("A"))
+  ) %>%
+  forecast(h = 50) %>%
+  autoplot(egg_prices) +
+  labs(title = "Annual egg prices",
+       y = "$US (in cents adjusted for inflation) ")
+```
+
+- The bias-adjustment is automatically applied, and the prediction intervals have the same coverage probability as on the transformed scale.
+
+The prediction intervals lie above 50 due to the tranformation. As a result of this artificail and unrealistic constraint, the forecast distributions have become extremely skewed.
+
+# Forecast Combinations
+
+An easy way to improve forecast accuracy is to use several different methods on the same time series and to average the resulting forecasts.Using a simple average has been pretty hard to beat.
+
+```{r}
+aus_cafe <- 
+  aus_retail %>%
+  filter(str_detect(Industry, "Takeaway")) %>%
+  summarise(Turnover = sum(Turnover))
+
+aus_cafe_train <-
+  aus_cafe %>% 
+  filter(year(Month) <= 2013)
+
+STLF <- decomposition_model(
+  STL(log(Turnover) ~ season(window = Inf)),
+  ETS(season_adjust ~ season('N'))
+)
+
+cafe_models <-
+  aus_cafe_train %>% 
+  model(
+    ets = ETS(Turnover),
+    stlf = STLF,
+    arima = ARIMA(log(Turnover))
+  ) %>% 
+  mutate(combination = (ets + stlf + arima) / 3)
+
+cafe_fcst <-
+  cafe_models %>% 
+  forecast(h = "5 years")
+```
+
+The simple `mutate()` combination of the models automatically handles the forecast distribution by taking account of the correlation between the forecast errors of the models that are included.
+
+```{r}
+cafe_fcst %>% 
+  autoplot(aus_cafe %>% filter(year(Month) > 2008), level = NULL)
+
+cafe_fcst %>% accuracy(aus_cafe)
+```
+## Forecast Combination Distrbutions
+
+The cafe forecasts contain both normal and transformed normal distributions. The combinaton is a simple mean.
+
+```{r}
+cafe_fcst %>% filter(Month == min(Month)) %>% pull(Turnover)
+```
+
+If we work with simulated sample paths, it is possible to create forecast distributiosn for the combination forecast as well
+
+```{r}
+cafe_future <-
+  cafe_models %>% 
+  generate(h = '5 years', times = 1000) %>% 
+  as_tibble() %>% 
+  as_tibble() %>% 
+  group_by(Month, .model) %>% 
+  summarise(
+    dist = distributional::dist_sample(list(.sim))
+  ) %>% 
+  ungroup() %>% 
+  as_fable(index = Month, key = .model, distribution = dist, response = 'Turnover')
+```
+
+Now all four models distributions are stored as empirical distributions and we can plot prediction intervals:
+
+```{r}
+cafe_future %>% filter(Month == min(Month)) %>% pull(dist)
+
+cafe_future %>% 
+  filter(.model == 'combination') %>% 
+  autoplot(aus_cafe %>% filter(year(Month) > 2008))
+```
+To check the accuracy of the 95% intervals, we can use a Winkler score:
+
+```{r}
+cafe_future %>% 
+  accuracy(aus_cafe, measures = interval_accuracy_measures, level = 95) %>% 
+  arrange(winkler)
+```
+Lower is better, so again the combination is better.
+
+# Prediction Intervals for Aggregates
+
+A common problem is to forecast the aggregateof several periods of data. We may have forecast monthly data but want the yearly total. If the point forecasts are means, then adding will give a good estimate of the total. However the prediction intervals are more difficult.
+
+A general solution is to use simulations:
+
+```{r}
+fit <-
+  aus_cafe %>% 
+  model(ETS(Turnover))
+
+futures <-
+  fit %>% 
+  generate(times = 1000, h = 12) %>% 
+  as_tibble() %>% 
+  group_by(.rep) %>% 
+  summarise(.sim = sum(.sim)) %>% 
+  summarise(total = distributional::dist_sample(list(.sim)))
+```
+
+Compute the mean and intervals of the samples:
+
+```{r}
+futures %>% 
+  mutate(
+    mean = mean(total),
+    pi80 = hilo(total, 80),
+    pi95 = hilo(total, 95)
+  )
+```
+# Backcasting
+
+Sometimes it is useful to 'backcast' a time series, that is forecast it in reverse. There are no in-built functions to do this, it can be done by creating a new time index.
+
+We want to extend that start of a time series:
+
+```{r}
+aus_cafe %>% 
+  mutate(reverse_time = rev(row_number())) %>% 
+  update_tsibble(index = reverse_time) %>%  
+  model(ets = ETS(Turnover ~ season(period = 12))) %>% 
+  forecast(h = 15) %>%
+  mutate(Month = aus_cafe$Month[1] - (1:15)) %>% 
+  as_fable(index = Month, response = 'Turnover', distribution = 'Turnover') %>% 
+  autoplot(aus_cafe %>% filter(year(Month) < 1990))
+```
+
+
+# Forecasting on Training and Test Sets
+
+Typically we compute one-step forecasts on the training data, and multi-step forecasts on the test data. However occasionally we may want to fit multi-step on the training data.
+
+## Multi-Step on Training Data
+
+```{r}
+training <- aus_cafe %>% filter(year(Month) <= 2013)
+test <- aus_cafe %>% filter(year(Month) > 2013)
+
+cafe_fit <-
+  training %>% 
+  model(ARIMA(log(Turnover)))
+
+cafe_fit %>%
+  forecast(h = 60) %>% 
+  autoplot(aus_cafe)
+```
+
+The `fitted()` function has an h argument to allow for $h$-step fitted values on training data.
+
+```{r}
+fits <- cafe_fit %>% fitted(h = 12)
+
+training %>% 
+  autoplot(Turnover) +
+  autolayer(fits, .fitted, col = 'red')
+```
+
+## One-Step on Test Data
+
+The usual process is to fit the model on the training data, then evaluate its performance on the test data. The comparisons on the test data usually use different forecast horizons.
+
+In the cafe data, we have 60 observations for the test data. The forecast errors will be 1-step, 2-step, ..., 60-step. The forecast variance increases with the forecast horizon, so if we are simply averaging the forecast errors, we are combining results with different variances.
+
+One solution is to continue to test using one steps: fit the model to the training data, then compute the forecasts using all the preceeding data, training plus test.
+
+```{r}
+
+cafe_fit %>% 
+  refit(test) %>% 
+  accuracy()
+```

@@ -1,0 +1,367 @@
+---
+title: "Chapter 12 - Advanced Forecasting Methods"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE, include = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+library(feasts)
+```
+
+# Complex Seasonality
+
+Previous chapters have looked at simple seasonal patterns, monthly and yearly. High frequency time series exhibit more complex seasonal patterns. Daily data may have a weekly and a monthly pattern.
+
+We take a look at phone calls to a bank per 5 minute interval between 7am and 9:05pm each weekday over 33 weeks.
+
+```{r}
+bank_calls %>% 
+    fill_gaps() %>% 
+    autoplot(Calls) +
+    labs(
+        title = "Five Minute Bank Call Volume",
+        x = 'Time',
+        y = 'Calls'
+    )
+```
+    
+# STL With Multiple Seasonal Periods
+
+The `STL()` function can handle multiple seasonality. It returns multiple seasons, along with trend and remainder.
+
+```{r}
+calls <- bank_calls %>% 
+    mutate(t = row_number()) %>% 
+    update_tsibble(index = t, regular = TRUE)
+
+# Look at the whole
+calls %>% 
+    model(
+        STL(sqrt(Calls) ~ season(period = 169) + season(period = 5 * 169), robust = TRUE)
+    ) %>% 
+    components() %>% 
+    autoplot()
+
+# Look at small subsection
+calls %>% 
+    model(
+        STL(sqrt(Calls) ~ season(period = 169) + season(period = 5 * 169), robust = TRUE)
+    ) %>% 
+    components() %>% 
+    filter(t < 1500) %>% 
+    autoplot()
+```
+The decomposition can be used in forecasting. Each of the seasonal components forecast using seasonal naive, then the the seasonally adjusted data forecast using ETS:
+
+```{r}
+# Forecasts from STL+ETS decomposition
+my_dcmp_spec <- decomposition_model(
+  STL(sqrt(Calls) ~ season(period = 169) +
+                    season(period = 5*169),
+      robust = TRUE),
+  ETS(season_adjust ~ season("N"))
+)
+fc <- calls %>%
+  model(my_dcmp_spec) %>%
+  forecast(h = 5 * 169)
+
+# Add correct time stamps to fable
+fc_with_times <- bank_calls %>%
+  new_data(n = 7 * 24 * 60 / 5) %>%
+  mutate(time = format(DateTime, format = "%H:%M:%S")) %>%
+  filter(
+    time %in% format(bank_calls$DateTime, format = "%H:%M:%S"),
+    wday(DateTime, week_start = 1) <= 5
+  ) %>%
+  mutate(t = row_number() + max(calls$t)) %>%
+  left_join(fc, by = "t") %>%
+  as_fable(response = "Calls", distribution = Calls)
+
+# Plot results with last 3 weeks of data
+fc_with_times %>%
+  fill_gaps() %>%
+  autoplot(bank_calls %>% tail(14 * 169) %>% fill_gaps()) +
+  labs(y = "Calls",
+       title = "Five-minute call volume to bank")
+```
+
+# Dynamic Harmonic Regression With Multiple Seasonal Periods
+
+With multiple seasonalities, Fourier terms can be used. As there are multiple seasonalities, we add Fourier terms for each seasonal period..
+
+In our example the periods are 169 and 845.
+
+We fit a dynamic harmonic regression model with an ARIMA error structure. The total number of Fourier terms can be selected using AIC$_c$. However with high seasonal periods, this tens to over-estimate the number of terms required. We use a subjective 10 and 5 terms respectively. $D = d = 0$ in order to handle the non-stationarity through the regression terms, and $P = Q = 0$ in order to handle the seasonality through the regression terms.
+
+```{r}
+fit <- calls %>%
+  model(
+    dhr = ARIMA(sqrt(Calls) ~ PDQ(0, 0, 0) + pdq(d = 0) +
+                  fourier(period = 169, K = 10) +
+                  fourier(period = 5*169, K = 5)))
+
+fc <- fit %>% forecast(h = 5 * 169)
+
+# Add correct time stamps to fable
+fc_with_times <- bank_calls %>%
+  new_data(n = 7 * 24 * 60 / 5) %>%
+  mutate(time = format(DateTime, format = "%H:%M:%S")) %>%
+  filter(
+    time %in% format(bank_calls$DateTime, format = "%H:%M:%S"),
+    wday(DateTime, week_start = 1) <= 5
+  ) %>%
+  mutate(t = row_number() + max(calls$t)) %>%
+  left_join(fc, by = "t") %>%
+  as_fable(response = "Calls", distribution = Calls)
+
+# Plot results with last 3 weeks of data
+fc_with_times %>%
+  fill_gaps() %>%
+  autoplot(bank_calls %>% tail(14 * 169) %>% fill_gaps()) +
+  labs(y = "Calls",
+       title = "Five-minute call volume to bank")
+```
+
+# Prophet Model
+
+The prophet model (introduced by Facebook) was originally used for forecasting daily data with weekly and yearly seasonality, plus holiday effects. It works best with data that have strong seasonality and several seasons of historical data.
+
+It can be considered a non-linear model in the form of:
+
+$$ y_t = g(t) + s(t) + h(t) + \varepsilon_t $$
+
+- $g(t)$ describes a piecewise linear trend (growth term)
+- $s(t)$ describes the various seasonal patterns
+- $h(t)$ describes the holiday effects
+- $\varepsilon_t$ is a white noise error term
+
+The knots are automatically selected if not specified. The seasonal consist of Fourier terms of the relevant periods. Holiday effects are added as simple dummy variables.
+
+The model is estimated using a Bayesian approach to allow for automatic selection of the changepoints and other model characteristics.
+
+## Example: Cement Production
+
+```{r}
+library(fable.prophet)
+
+cement <-
+    aus_production %>% 
+    filter(year(Quarter) >= 1988)
+
+train <-
+    cement %>% 
+    filter(year(Quarter) <= 2007)
+
+cement_fit <-
+    train %>%
+    model(
+        arima = ARIMA(Cement),
+        ets = ETS(Cement),
+        prophet = prophet(Cement ~ season(period = 4, order = 2, type = 'multiplicative'))
+    )
+```
+
+The seasonal term must have the period fully specified for quarterly or monthly data, as the default assumes data are observed at least daily.
+
+```{r}
+cement_fc <- cement_fit %>% forecast(h = '2 years')
+cement_fc %>% autoplot(cement %>% filter(year(Quarter) > 2005))
+
+cement_fc %>% accuracy(cement)
+```
+
+The prophet appears to do worse than ETS and ARIMA.
+
+# Vector Autoregressions
+
+A limitation of the models we've considered are that they are unidirectional: the forecast variable is influenced by the predictor variables, but not vice-versa. But there are times when the reverse should be allowed for.
+
+These feedback relationships are allows for in the vector autoregressive (VAR) framework. In this framework, all variables are treated symmetrically. They are all modelled as if they influence each other equally.
+
+In a more formal terminology, they are treated as  **endogenous**.
+
+To show this we write variables as $y_{1,t}$, which is the $t$th observation of variable 1.
+
+A VAR model is a generalisation of the univariate autoregressive model. There is one equation per variable.
+
+If the series are stationary, we forecast by fitting the VAR directly on the data. If it is non-stationary, we fit it on the difference.
+
+There are two decisions to make on what should be included:
+
+- How many variables $K$?
+- How many lags $p$?
+
+## VAR Example
+
+```{r}
+fit <- us_change %>%
+  model(
+    aicc = VAR(vars(Consumption, Income)),
+    bic = VAR(vars(Consumption, Income), ic = "bic")
+  )
+
+fit
+
+glance(fit)
+```
+
+A VAR(5) model is selected using the AIC$_c$, while a VAR(1) is selected using the BIC.   
+
+```{r}
+fit %>%
+  augment() %>%
+  ACF(.innov) %>%
+  autoplot()
+```
+
+We see that the BIC VAR(1) still has some autocorrelation for Consumption, whereas the AIC VAR(5) has effectively captured all of the infomation in the data.
+
+```{r}
+fit %>%
+  select(aicc) %>%
+  forecast() %>%
+  autoplot(us_change %>% filter(year(Quarter) > 2010))
+```
+
+# Neural Network Autoregression
+
+With time series data, lagged values of the series can be used as inputs in to a neural network. This is called a neural network autorgression or NNAR model.
+
+We consider only feed forward neural networks with a single hiddel layer. The notation i $NNAR(p,k)$ to denote $p$ lagged inputs and $k$ nodes in the hidden layer. An $NNAR(9,5)$ uses the last 9 observations feeding into 5 nodes at the hidden layer.
+
+With seasonal data it's useful to add the last observed data from the same season as inputs. An $NNAR(3,1,2)_{12}$ has the last three observed values, as well as one value from a a year ago (assuming monthly data).
+
+The `NETNAR()` function fits an $NNAR(p, P, k)_m$ model. If $p$, and $P$ are not specified then they are selected automatically.
+
+When forecasting, this is done iteratively. One step is done using the available data, two step is done using the available data and the one-step.
+
+```{r}
+sunspots <- sunspot.year %>% as_tsibble()
+sunspots %>%
+  model(NNETAR(sqrt(value))) %>%
+  forecast(h = 30) %>%
+  autoplot(sunspots) +
+  labs(x = "Year", y = "Counts",
+       title = "Yearly sunspots")
+```
+
+# Bootstrapping and Bagging
+
+In chapter 5 we bootstrapped the residuals of a time series in order to simulate future values of a series using a model..
+
+More generally we can generate new time series that are similar to our observed time series.
+
+The general procedure is:
+
+- The time series is transformed if required.
+- Decomposed into trend, seasonal and remainder using STL.
+- We obtained shuffled versions of the remainder to get a bootstrapped remainder series.
+  - Because there may be autocorrelation, can't use a 're-draw' procedure.
+  - Use a 'blocked bootstrap' where contiguous sections of the series are drawn and joined together.
+- This bootstrapped series is joined to the trend and seasonal components.
+- Decomposition is reversed to give variatons on the original time series.
+
+## Example: Cement
+
+```{r}
+cement <-
+  aus_production %>% 
+  filter(year(Quarter) > 1988) %>%
+  select(Quarter, Cement)
+
+cement_stl <-
+  cement %>% 
+  model(STL(Cement))
+
+cement_stl %>% 
+  components() %>%
+  autoplot()
+```
+
+We can generate a bootstrapped version of this data. `generate()` is usually used to produce simulations of the future from a model. We want simulations of historical data.
+
+The `new_data` argument is used to pass in the original data so that the same time periods are used for the simulated data.
+
+```{r}
+cement_stl %>% 
+  generate(
+    new_data = cement,
+    times = 10,
+    bootstrap_block_size = 8
+  ) %>% 
+  autoplot(.sim) + 
+  autolayer(cement, Cement) +
+  guides(colour = 'none') +
+  labs(title = 'Cement Production: Bootstrapped', y = "Tonnes ('000)")
+```
+
+# Bagged Forecasts
+
+A use for bootstrapping is to increase forecast accuracy. If we produce forecasts for each of the bootstrapped series, then average the resulting forecasts, we get better forecasts than simply using the original series directly. This is called **bagging**, a portmanteau of **bootstrap aggregation**.
+
+With the cement data, we simulate many series that are similar to the original data:
+
+```{r}
+cement_bag <-
+  cement_stl %>% 
+  generate(new_data = cement, times = 100, bootstrap_block_size = 8) %>% 
+  select(-c(.model, Cement))
+
+print(cement_bag)
+```
+
+For each of these series we fit an ETS model.
+
+```{r}
+cement_ets <-
+  cement_bag %>% 
+  model(ets = ETS(.sim)) %>% 
+  forecast(h = 12)
+
+cement_ets %>% 
+  update_tsibble(key = .rep) %>% 
+  autoplot(.mean) +
+  autolayer(cement) +
+  guides(colour = FALSE) +
+  labs(
+    title = 'Cement Production - Bootstrapped Forecasts',
+    y = "Tonnes (thousands)"
+  )
+```
+These forecasts can then be averaged for each time period to obtained the "bagged forecasts" for the original data.
+
+```{r}
+bagged <-
+  cement_ets %>% 
+  summarise(bagged_mean = mean(.mean))
+
+print(bagged)
+
+cement %>% 
+  model(ets = ETS(Cement)) %>% 
+  forecast(h = 12) %>% 
+  autoplot(cement) + 
+  autolayer(bagged, bagged_mean, colour = 'red')
+```
+

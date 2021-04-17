@@ -14,13 +14,40 @@ knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
 library(tidyverse)
 library(fpp3)
 library(tsibble)
+library(fable)
+library(feasts)
 ```
 
 1) **This exercise uses data set LakeHuron giving the level of Lake Huron from 1875–1972.**
 
 a. **Convert the data to a tsibble object using the as_tsibble() function.**
+
+```{r}
+huron <-
+    LakeHuron %>% 
+    as_tsibble() %>% 
+    rename(Year = index, Feet = value)
+
+autoplot(huron, Feet)
+```
+
 b. **Fit a piecewise linear trend model to the Lake Huron data with a knot at 1920 and an ARMA error structure.**
+
+```{r}
+huron_mdl <-
+    huron %>% 
+    model(piecewise = TSLM(Feet ~ trend(knots = 1920)))
+```
+
 c. **Forecast the level for the next 30 years. Do you think the extrapolated linear trend is realistic?**
+
+```{r}
+huron_mdl %>% 
+    forecast(h = 20) %>% 
+    autoplot(huron)
+```
+
+I don't think the linear trend is realistic, espectically given that the confidence intervals are so large.
 
 Repeat Exercise 4 from Section 7.10, but this time adding in ARIMA errors to address the autocorrelations in the residuals.
 

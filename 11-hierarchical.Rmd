@@ -1,0 +1,434 @@
+---
+title: "Chapter 11 - Hierarchical Models"
+author: "Greg Foletta"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Switch devices to allow for transparency..
+knitr::opts_chunk$set(dev.args = list(png = list(type = "cairo")))
+```
+
+```{r, message = FALSE, include = FALSE}
+library(tidyverse)
+library(forecast)
+library(fma)
+library(magrittr)
+library(fpp3)
+library(tsibble)
+library(lubridate)
+library(feasts)
+```
+
+
+Time series can often be naturally disaggregated by various attributes, and each of these can themselves be disaggregated into finer categories. An example could be a cycling manufacturer breaking down sales by product type (mountain bike, road bike), then breaking these further down into different types.
+
+These are known as *hierarchical time series*.
+
+They often arise due to geographical divisions - e.g. sales broken down by country, then state.
+
+Other aggregation structures arise when attributes of interest are crossed rather than nested. For example the bike manufacturer may look at size, gender, price range, etc. These aren't hierarchical, but known as *grouped time series*.
+
+More complex structures arise when attributes are both nested and crossed.
+
+Forecasts are often required for all disaggregate and aggregate series. It's natural to want these forecasts to add up in the same way as the data. This is the challenge, want the data to be **coherent** across the entire aggregation structure.
+
+# Hierarchical Time Series
+
+In a hierarchy, the top is the total, where the $t$th observation is denoted by $y_t$ for $t = 1, \ldots, T$.
+
+This total is disaggregated into two series, which are then themselves divided into three and two series.
+
+Below the top level we use $y_{j,t}$ to denote the $t$th observation of node $j$.
+
+The total njmber of series in the hierarchy is $n$, while the number at the bottom level is $m$, with $n > m$ in all herarchies.
+
+For any time $t$, the observations at the bottom level will sum to the observations of the series above.
+
+## Example
+
+The `tourism` tsibble contains data on quarterly domestic tourism demand, with key variables `State` and `Region`.
+
+Using the `aggregate_key()` functon we create the hierarchical time series with overnight trips in regions. This is created using a *parent / child* specification.
+
+```{r}
+tourism_hts <-
+    tourism %>% 
+    aggregate_key(State / Region, Trips = sum(Trips))
+
+tourism_hts
+```
+
+We can now graph this:
+
+```{r}
+tourism_hts %>% 
+    filter(is_aggregated(Region)) %>%
+    autoplot(Trips) +
+    facet_wrap(vars(State), scales = 'free_y', ncol = 3) +
+    theme(legend.position = 'none')
+```
+
+Can also look within the region and see the breakdown plus the aggregate.
+
+```{r}
+tourism_hts %>% 
+    filter(State == 'Victoria' | State == 'New South Wales') %>% 
+    autoplot(Trips) +
+    facet_wrap(vars(State), scales = 'free_y') +
+    theme(legend.position = 'none')
+```
+
+# Grouped Time Series
+
+Within a grouped time series, the data structure does not naturally disaggregate in a unique hierarchical manner. They can be thought of as hierarchical time series that do not impose a unique hierarchical structure.
+
+## Example
+
+Consider Australian prison population data.
+
+```{r}
+prison <- read_csv("https://OTexts.com/fpp3/extrafiles/prison_population.csv")
+
+prison <-
+    prison %>% 
+    mutate(Quarter = yearquarter(Date)) %>% 
+    select(-Date) %>% 
+    as_tsibble(
+        key = c(Gender, Legal, State, Indigenous),
+        index = Quarter
+    ) %>% 
+    relocate(Quarter)
+```
+
+A grouped time series is created using the 'crossing' syntac of attribute_1 * attribute_2.
+
+```{r}
+prison_gts <-
+    prison %>% 
+    aggregate_key(Gender * Legal * State, Count = sum(Count)/1e3)
+```
+
+Using `is_aggregated()` within `filter()` is helpful for exploring or plotting the main groups.
+
+```{r}
+prison_gts %>%
+    filter(
+        !is_aggregated(Gender),
+        !is_aggregated(Legal),
+        is_aggregated(State)
+    ) %>% 
+    autoplot(Count)
+```
+
+Here's an example of gender per state:
+
+```{r}
+prison_gts %>%
+    filter(
+        !is_aggregated(Legal),
+        !is_aggregated(State),
+        !is_aggregated(Gender)
+    ) %>%
+    mutate(Gender = as.character(Gender)) %>%
+    ggplot(aes(Quarter, Count, group = Gender, colour = Gender)) +
+    stat_summary(fun = sum, geom = 'line') +
+    facet_wrap(vars(as.character(State)), nrow = 2, scales = 'free_y') +
+    theme(axis.text.x = element_text(angle = 90))
+
+```
+
+# Mixed Hierarchical and Grouped
+
+Often disaggregation factors are both nested and crossed. For example the Australian tourism data can be disaggregated by geography and by purpose. This is described as a 'nested geography crossed by purpose'.
+
+```{r}
+tourism_nc <-
+    tourism %>% 
+    aggregate_key((State/Region) * Purpose, Trips = sum(Trips))
+```
+
+This tsibble contains 425 series, including the 85 hierarchical, as well as another 340 of the each hierarchical is crossed with the purpose of travel.
+
+# Single Level Approaches
+
+Traditionally the forecasts for grouped or hierarchical time series involved selecting one level of aggregation and generating forecasts for that level. These are then aggregated for higher levels or disaggregated for lower levels.
+
+## Bottom Up
+
+In this method we generate forecasts for the lower level, then sum these to produce forecasts for each series in the structure.
+
+$$ \hat{y}_{AA,h}, \hat{y}_{AB,h}, \hat{y}_{BA,h}, \hat{y}_{BB,h} $$
+
+Summing these we get:
+
+$$ \tilde{y}_h = \hat{y}_{AA,h} + \hat{y}_{AB,h} + \hat{y}_{BA,h} + \hat{y}_{BB,h} \\
+\tilde{y}_{A,h} = \hat{y}_{AA,h} + \hat{y}_{AB,h} \\
+\ldots $$
+
+An advantage is that we are forecasting the bottom level and no information is lost. However bottom level data can be noisy and more challenging to forecast.
+
+## Example
+
+We want national and state forecasts for Australian tourism data, but we aren't worried about regions or purpose.
+
+```{r}
+tourism_states <-
+    tourism %>% 
+    aggregate_key(State, Trips = sum(Trips))
+```
+
+Bottom level forecasts are then generated, then summed to obtain national forecasts.
+
+```{r}
+tourism_state_forecast <-
+    tourism_states %>% 
+    filter(!is_aggregated(State)) %>% 
+    model(ets = ETS(Trips)) %>% 
+    forecast()
+
+
+tourism_national_forecast <-
+    tourism_state_forecast %>% 
+    summarise(value = sum(Trips), mean = mean(value))
+```
+
+However we want a more general methof that will work with all the forecasting methods discussed.
+
+The `reconcile()` function is used to specify how we want to compute coherent forecasts.
+
+```{r}
+tourism_states %>%
+    model(ets = ETS(Trips)) %>% 
+    reconcile(bu = bottom_up(ets)) %>% 
+    forecast() %>% 
+    autoplot(tourism_states)
+```
+
+
+This has created a new 'model' to produce bottom-up forecasts. The fable objects contains the ets forecasts as well as coherent bottom up forecasts. At the state level the forecasts are the same, but national ets forecasts will be different from bottom up forecasts.
+
+The general workflow:
+
+```
+data %>% aggregate_key() %>% model() %>% reconcile() %>% forecast()
+```
+
+# Top Down
+
+Top down involves first forecasting generating forecasts for the total series, then disaggregating down the hierarchy.
+
+Let $p_1, \ldots, p_m$ denote a set of disaggregation proportions which determine how the forecasts of the total series are to be distributed to obtain forecasts for each series at the bottom level of the structure.
+
+$$ \tilde{y}_{AA,t} = p_1 \hat{y}_t,~~~ \tilde{y}_{AB,t} = p_2 \hat{y}_t,~~~ \ldots $$
+
+Once the bottom level forecasts have been generated, these are aggregated to generate coherent forecasts for the rest of the series. Top down forecasts can be generated using `top_down()`.
+
+The two most common methods to specify disaggregation proportions are based on the historical proportions of data.
+
+## Average Historical Proportions
+
+$$ p_j = \frac{1}{T} \sum_{t=1}^T \frac{y_{j,t}}{y_t} $$
+
+For $j = 1,ldots,m$. Each proportion captures the average historical value of the bottom level series relative to the average value of the total aggregate. This is implemented in `top_down()` by setting `method = 'proportion_averages'`.
+
+- Advantage: simplicity, reasonably good forecasts with low count data
+- Disadvantage: information loss, unable to capture individual series characteristics.
+
+## Forecast Proportions
+
+Because historical proportions do not take into account how the proportions may change over time, proportions based on forecasts can be used.
+
+In a one level hierarchy, $h$-step ahead forecasts can be generated. They aren't used directly and they aren't coherent (don't add up to the aggregate).
+
+We calculate the proportion of each $h$-step ahead initial forecasts at this level. These are the *forecast proportions*. We use these to disaggregate the top level forecast in order to generate coherent forecassts for the whole hierarchy.
+
+For a $K$ level hierarchy this process is repeated for each node, going from the top to the bottom.
+
+This can be set in `top_down()` using `method = 'forecast_proportions'`. This is the default choice for `top_down()`.
+
+One disadvantage is that they do not produce unbiased coherent forecasts, even if the base forecasts are unbiased.
+
+## Middle out
+
+This combines the two approaches. A middle level is chosen and forecasts generated. For series above coherent forecasts are generated using bottop up. For series below top down is used. This is implemented using `middle_out()`.
+
+# Forecast Reconciliation
+
+The equations previously discussed can be thought of as aggregation constraints or summing equalities. They can be more efficiently represented using matrix notation.
+
+For any aggregration structure we can construct an $n \times m$ matrix $\bf{S}$ (referred to as the summing matrix). This dictates the way in which bottom level series aggregate.
+
+$$
+\begin{bmatrix}
+    y_{t} \\
+    y_{A,t} \\
+    y_{B,t} \\
+    y_{AA,t} \\
+    y_{AB,t} \\
+    y_{AC,t} \\
+    y_{BA,t} \\
+    y_{BB,t}
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+    1 & 1 & 1 & 1 & 1 \\
+    1 & 1 & 1 & 0 & 0 \\
+    0 & 0 & 0 & 1 & 1 \\
+    1  & 0  & 0  & 0  & 0  \\
+    0  & 1  & 0  & 0  & 0  \\
+    0  & 0  & 1  & 0  & 0  \\
+    0  & 0  & 0  & 1  & 0  \\
+    0  & 0  & 0  & 0  & 1
+  \end{bmatrix}
+  \begin{bmatrix}
+    y_{AA,t} \\
+    y_{AB,t} \\
+    y_{AC,t} \\
+    y_{BA,t} \\
+    y_{BB,t}
+  \end{bmatrix}
+  $$
+
+Or $\bf{y}_t = \bf{Sb_t $ where $\bf{y}_t$ is an $n$ dimensional matrix of all the observations in the hierarchy at time $t$, $\bf{S}$ is the summing matrix, and $\bf{b}_t$ is an $m$ dimensional vector of all the observations in the bottom level of the hierarchy at time $t$.
+
+For a grouped structure:
+
+$$
+\begin{bmatrix}
+    y_{t} \\
+    y_{A,t} \\
+    y_{B,t} \\
+    y_{X,t} \\
+    y_{Y,t} \\
+    y_{AX,t} \\
+    y_{AY,t} \\
+    y_{BX,t} \\
+    y_{BY,t}
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+    1 & 1 & 1 & 1 \\
+    1 & 1 & 0 & 0 \\
+    0 & 0 & 1 & 1 \\
+    1 & 0 & 1 & 0 \\
+    0 & 1 & 0 & 1 \\
+    1 & 0 & 0 & 0 \\
+    0 & 1 & 0 & 0 \\
+    0 & 0 & 1 & 0 \\
+    0 & 0 & 0 & 1
+  \end{bmatrix}
+  \begin{bmatrix}
+    y_{AX,t} \\
+    y_{AY,t} \\
+    y_{BX,t} \\
+    y_{BY,t}
+  \end{bmatrix},
+  $$
+
+## Mapping Matrices
+
+This matrix notation allows us to represent all forecasting methods for hierarchical and grouped time series using a common notation.
+
+If we forecast all series ignoring constraints, we call these *base forecassts* and denote them by $\hat{\bf{y}}_t$.
+
+Then all coherent forecasting approaches for either hierarchical or grouped structures can be represented as:
+
+$$ \tilde{\bf{y}}_h = \bf{SG\hat{y}}_h $$
+where $\bf{G} is a matrix that maps the base forecassts into the bottom level, and $\bf{S}$ is sums these up using the aggregation structure.
+
+The $\bf{G}$ matrix is defined according to the approach implemented. A bottom up looks like:
+
+$$
+\bf{G}=
+  \begin{bmatrix}
+    0 & 0 & 0 & 1 & 0 & 0 & 0 & 0\\
+    0 & 0 & 0 & 0 & 1 & 0 & 0 & 0\\
+    0 & 0 & 0 & 0 & 0 & 1 & 0 & 0\\
+    0 & 0 & 0 & 0 & 0 & 0 & 1 & 0\\
+    0 & 0 & 0 & 0 & 0 & 0 & 0 & 1\\
+  \end{bmatrix}.
+$$
+Notice it contains two partitions. The first three columns zero out the base forecasts of the series above the bottom level, while the $m$-dimensional identity matrix picks only the base forecasts of the bottom level.
+
+Here's an example of a top-down approach:
+
+$$
+\bf{G}=
+    \begin{bmatrix}
+      p_1 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\
+      p_2 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\
+      p_3 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\
+      p_4 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\
+      p_5 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\
+    \end{bmatrix}.
+$$
+The first column includes the proportions that distribute the base forecasts of the top level to the bottom level. These are then summed by the $\bf{S}$ matrix.
+
+For middle out, the matrix would be a combination of these two.
+
+# Forecast Reconcilation
+
+The previous equation shows that pre-multiplying any set of base forecasts with $\bf{SG}$ will return a set of coherent forecasts.
+
+
+
+
+# MinT Optimal Reconciliation
+
+There is a $\bf{G}$ matrix that minimises the total forecast variance of the set of coherent forecasts, which is called the MinT (minimum trace) optimal reconciliation approach.
+
+# Forecasting Domestic Tourism
+
+In this section we compute forecasts for the Australian tourism data previously used.
+
+```{r}
+tourism_full <- tourism %>%
+  aggregate_key((State/Region) * Purpose, Trips = sum(Trips))
+
+fit <- tourism_full %>%
+  filter(year(Quarter) <= 2015) %>%
+  model(base = ETS(Trips)) %>%
+  reconcile(
+    bu = bottom_up(base),
+    ols = min_trace(base, method = "ols"),
+    mint = min_trace(base, method = "mint_shrink"),
+  )
+```
+
+Fit contains the base model for each series, along with the three methods for producing coherent forecasts.
+
+```{r}
+fc <- fit %>% forecast(h = "2 years")
+```
+
+Forecasting this fit generates base *and* coherent forecasts across all the series in the aggregation structure.
+
+The next plot shows the base 
+```{r}
+fc %>%
+  filter(is_aggregated(Region), is_aggregated(Purpose)) %>%
+  autoplot(
+    tourism_full %>% filter(year(Quarter) >= 2011),
+    level = NULL
+  ) +
+  labs(y = "Trips ('000)") +
+  facet_wrap(vars(State), scales = "free_y")
+```
+
+# Reconciled Distributional Forecasts
+
+We are also interested in the forecast distributions so we can compute prediction intervals.
+
+If the base forecasts are normally distributed, then the reconciled forecasts are also normally distributed.
+
+If it is unreasonable to assume normality for base forecasts, we can use bootstrapping.

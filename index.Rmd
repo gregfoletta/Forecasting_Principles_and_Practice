@@ -48,4 +48,18 @@ output:
 
 * [Notes](09-ARIMA_models.html) - Stationarity and Differencing, Backshift Notation, Autoregressive Models, Moving Average Models, Estimation and Order, Forecasting, Seasonal ARIMA. 
 
+# Chapter 10 - Dynamic Regression Models
 
+* [Notes](10-dynamic_regression.html)
+
+# Chapter 11 - Hierarchical and Grouped Series
+
+* [Notes](11-hierarchical.html)
+  
+# Chapter 12 - Advances Forecasting Methods
+
+* [Notes](12-advanced.html) 
+
+# Chapter 13 - Practical Forecasting Issues
+
+* [Notes](13-issues.html) 
